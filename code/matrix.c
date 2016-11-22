@@ -295,38 +295,7 @@ internal int floatIsZero(double x)
   return 0;
 }
 
-/* remove */
-int matrix_create(Matrix** m)
-{
-  int64 ni, nj;
-  Matrix* headNode;
-  int readingStatus;
-  
-  /* read the matrix's size */
-  scanf("%"SCNd64" %"SCNd64, &ni, &nj);
-  headNode = createMatrixHeaders(ni, nj);
-  if (headNode == NULL)
-  {
-    return -1;
-  }
-  
-  do
-  {
-    readingStatus = readLineAndUpdateMatrix(headNode);
-  }
-  while (readingStatus == 0);
-  
-  if (readingStatus == -1)
-  {
-    matrix_destroy(headNode);
-    return -1;
-  }
-  
-  *m = headNode;
-  return 0;
-}
-
-int matrix_createEmpty(Matrix** m, int64 ni, int64 nj)
+int matrix_create(Matrix** m, int64 ni, int64 nj)
 {
   Matrix* headNode = createMatrixHeaders(ni, nj);
   if (headNode == NULL)

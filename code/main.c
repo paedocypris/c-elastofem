@@ -130,7 +130,7 @@ int createElements(int64 *nElem, Element **elements)
 int computeGlobalMatrices(const int64 nElem, const Element *elementsArray, const int64 nNode, const Node *nodesArray)
 {
   Matrix *stifMatrix;
-  matrix_createEmpty(&stifMatrix, nNode, nNode);
+  matrix_create(&stifMatrix, nNode, nNode);
   
   int i;
   for (i = 0; i < nElem; i++)
