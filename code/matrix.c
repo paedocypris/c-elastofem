@@ -428,6 +428,75 @@ int matrix_add(const Matrix* m, const Matrix* n, Matrix** r)
   return 0;
 }
 
+int matrix_subtract(const Matrix* m, const Matrix* n, Matrix** r)
+{
+  const Matrix *currentLowerNode, *currentHigherNode, *lowerHeadNode, *higherHeadNode, *proxyNode;
+  Matrix* headNodeR;
+  int64 ni, nj;
+  int64 lowerNodeIndex, higherNodeIndex;
+  
+  if (m == NULL || n == NULL)
+  {
+    fprintf(stderr, "Tentando subtrair uma ou duas matrizes não definidas.\n");
+    return -1;
+  }
+  
+  if (m->line != n->line || m->column != n->column)
+  {
+    fprintf( stderr, "Subtração não definida: Matriz M: %" PRId64 "x%" PRId64 "; Matriz N: %" PRId64 "x%" PRId64 "\n", -m->line, -m->column, -n->line, -n->column);
+    return -1;
+  }
+  ni = -m->line;
+  nj = -m->column;
+  
+  headNodeR = createMatrixHeaders(ni, nj);
+  
+  currentLowerNode = findNextNode(m, m);
+  lowerHeadNode = m;
+  currentHigherNode = findNextNode(n, n);
+  higherHeadNode = n;
+  
+  /* shows if the current lower node belongs to the matrix m
+     mIsLower = 1 if positive
+     mIsLower = -1 if negative */
+  int mIsLower = 1;
+  
+  while (currentLowerNode != NULL && currentHigherNode != NULL)
+  {
+    lowerNodeIndex = getMatrixIndex(lowerHeadNode, currentLowerNode);
+    higherNodeIndex = getMatrixIndex(higherHeadNode, currentHigherNode);
+    
+    while (currentHigherNode == NULL || (currentLowerNode != NULL && lowerNodeIndex < higherNodeIndex)) 
+    {
+      matrix_setelem(headNodeR, currentLowerNode->line, currentLowerNode->column, mIsLower*currentLowerNode->info);
+      currentLowerNode = findNextNode(lowerHeadNode, currentLowerNode);
+      lowerNodeIndex = getMatrixIndex(lowerHeadNode, currentLowerNode);
+    }
+    if (lowerNodeIndex == higherNodeIndex)
+    {
+      matrix_setelem(headNodeR, currentLowerNode->line, currentLowerNode->column, mIsLower*(currentLowerNode->info - currentHigherNode->info));
+      currentLowerNode = findNextNode(lowerHeadNode, currentLowerNode);
+      currentHigherNode = findNextNode(higherHeadNode, currentHigherNode);
+    }
+    else
+    {
+      /* switch the lower and higher nodes */
+      proxyNode = currentLowerNode;
+      currentLowerNode = currentHigherNode;
+      currentHigherNode = proxyNode;
+      
+      proxyNode = lowerHeadNode;
+      lowerHeadNode = higherHeadNode;
+      higherHeadNode = proxyNode;
+      
+      mIsLower = mIsLower*-1;
+    }
+  }
+  
+  *r = headNodeR;
+  return 0;
+}
+
 int matrix_multiply(const Matrix* m, const Matrix* n, Matrix** r)
 {
   const Matrix *currentMNode, *currentNNode;

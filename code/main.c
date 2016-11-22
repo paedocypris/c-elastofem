@@ -35,6 +35,9 @@ int createElements(int64 *nElem, Element **elements);
 int computeGlobalMatrices(const int64 nElem, const Element *elementsArray, const int64 nNode, const Node *nodesArray);
 int computeElementStiffness(Matrix *stifMatrix, const Element *element, const Node *nodes);
 
+int conjugateGradientMethod(int64 ni, int64 nj, Matrix *a, Matrix *x, Matrix *b);
+
+
 int main( void ) {
   int64 nNode;
   Node *nodes;
@@ -50,11 +53,15 @@ int main( void ) {
   createElements(&nElement, &elements);
   
   /* (c) Computation of the element stiffness matrices aK and element loads bK. */
-  
-  
   /* (d) Assembly of the global stiffness matrix A and load vector b. */
+  computeGlobalMatrices( nElement, elements, nNode, nodes);
   
   /* (e) Solution of the system of equations Ax = b. */
+  /* TODO: calc (f,b) */
+  Matrix *b;
+  matrix_create(&b, nNode, 1);
+  Matrix *x;
+  matrix_create(&x, nNode, 1);
   
   /* (f) Presentation of result. */
 
@@ -89,6 +96,7 @@ int createNodes(int64 *nNode, Node **nodes)
   }
   
   *nodes = newNodes;
+  *nNode = n;
   
   fclose(fp);
   return 0;
@@ -122,6 +130,7 @@ int createElements(int64 *nElem, Element **elements)
   }
   
   *elements = newElements;
+  *nElem = n;
   
   fclose(fp);
   return 0;
@@ -136,6 +145,7 @@ int computeGlobalMatrices(const int64 nElem, const Element *elementsArray, const
   for (i = 0; i < nElem; i++)
   {
     computeElementStiffness(stifMatrix, &elementsArray[i],nodesArray);
+    matrix_print(stifMatrix);
   }
   return 0;
 }
@@ -179,6 +189,80 @@ int computeElementStiffness(Matrix *stifMatrix, const Element *element, const No
   matrix_sumelem(stifMatrix, element->n2, element->n0, k02); /* K20 */
   matrix_sumelem(stifMatrix, element->n2, element->n1, k12); /* K21 */
   matrix_sumelem(stifMatrix, element->n2, element->n2, k22); /* K22 */
+  
+  return 0;
+}
+
+int conjugateGradientMethod(int64 ni, int64 nj, Matrix *a, Matrix *x, Matrix *b)
+{
+  // double c, t, d;
+  Matrix *p, *r, *temp;
+  matrix_create(&p, nj, 1);
+  matrix_create(&r, nj, 1);
+  matrix_create(&temp, nj, 1);
+  
+  /* r = b - Ax;
+     p = r;
+     c = (r,r);
+     for (k = 0 to M) do
+       if (p,p)^0.5 < tolA then exit loop;
+       z = Ap;
+       t = c / (p,z);
+       x = x + tp;
+       r = r - tz;
+       d = (r,r)
+       if (d < tolB) then exit loop;
+       p = r + (d/c)p;
+       c = d;
+     end do */
+     
+   /* r = b - Ax 
+  matrix_multiply(a, x, temp);
+  matrix_subtract(b, temp, r);
+  
+  multMatrix (ni, nj, a, nj, 1, x, temp);
+  subtractVector(nj, b, temp, r);
+  
+  /* p = r 
+  copyVector(nj, r, p);
+  
+  /* c = (r,r) 
+  c = internalProduct(nj, r, r);
+  
+  int i;
+  for (i = 0; i < M; i++)
+  {
+    if (internalProduct(nj, p, p) < TOL) break;
+    
+    /* z = Ap 
+    multMatrix(ni, nj, a, nj, 1, p, temp);
+    
+    /* t = c / (p,z) 
+    t = c / internalProduct(nj, p, temp);
+    
+    /* x = x + tp; 
+    addVectorScalar(nj, x, p, t, x);
+    
+    /* r = r - tz; 
+    addVectorScalar(nj, r, temp, -t, r);
+    
+    /* d = (r,r) 
+    d = internalProduct(nj, r, r);
+    
+    /*   if (d < tolB) then exit loop; 
+    if (d < TOL) break;
+    
+    /* p = r + (d/c)p; 
+    addVectorScalar(nj, r, p, d/c, p);
+    
+    /* c = d; 
+    c = d;
+  }
+  TODO: DEstroy this   */
+  
+  matrix_destroy(p);
+  matrix_destroy(r);
+  matrix_destroy(temp);
   
   return 0;
 }
