@@ -394,12 +394,12 @@ int matrix_add(const Matrix* m, const Matrix* n, Matrix** r)
   currentHigherNode = findNextNode(n, n);
   higherHeadNode = n;
   
-  while (currentLowerNode != NULL && currentHigherNode != NULL)
+  while (currentLowerNode != NULL || currentHigherNode != NULL)
   {
     lowerNodeIndex = getMatrixIndex(lowerHeadNode, currentLowerNode);
     higherNodeIndex = getMatrixIndex(higherHeadNode, currentHigherNode);
     
-    while (currentHigherNode == NULL || (currentLowerNode != NULL && lowerNodeIndex < higherNodeIndex)) 
+    while (currentLowerNode != NULL && (currentHigherNode == NULL || lowerNodeIndex < higherNodeIndex))
     {
       matrix_setelem(headNodeR, currentLowerNode->line, currentLowerNode->column, currentLowerNode->info);
       currentLowerNode = findNextNode(lowerHeadNode, currentLowerNode);
@@ -407,6 +407,10 @@ int matrix_add(const Matrix* m, const Matrix* n, Matrix** r)
     }
     if (lowerNodeIndex == higherNodeIndex)
     {
+      if (lowerNodeIndex == -1)
+      {
+        break;
+      }
       matrix_setelem(headNodeR, currentLowerNode->line, currentLowerNode->column, currentLowerNode->info + currentHigherNode->info);
       currentLowerNode = findNextNode(lowerHeadNode, currentLowerNode);
       currentHigherNode = findNextNode(higherHeadNode, currentHigherNode);
@@ -461,12 +465,12 @@ int matrix_subtract(const Matrix* m, const Matrix* n, Matrix** r)
      mIsLower = -1 if negative */
   int mIsLower = 1;
   
-  while (currentLowerNode != NULL && currentHigherNode != NULL)
+  while (currentLowerNode != NULL || currentHigherNode != NULL)
   {
     lowerNodeIndex = getMatrixIndex(lowerHeadNode, currentLowerNode);
     higherNodeIndex = getMatrixIndex(higherHeadNode, currentHigherNode);
     
-    while (currentHigherNode == NULL || (currentLowerNode != NULL && lowerNodeIndex < higherNodeIndex)) 
+    while (currentLowerNode != NULL && (currentHigherNode == NULL || lowerNodeIndex < higherNodeIndex))
     {
       matrix_setelem(headNodeR, currentLowerNode->line, currentLowerNode->column, mIsLower*currentLowerNode->info);
       currentLowerNode = findNextNode(lowerHeadNode, currentLowerNode);
@@ -474,6 +478,10 @@ int matrix_subtract(const Matrix* m, const Matrix* n, Matrix** r)
     }
     if (lowerNodeIndex == higherNodeIndex)
     {
+      if (lowerNodeIndex == -1)
+      {
+        break;
+      }
       matrix_setelem(headNodeR, currentLowerNode->line, currentLowerNode->column, mIsLower*(currentLowerNode->info - currentHigherNode->info));
       currentLowerNode = findNextNode(lowerHeadNode, currentLowerNode);
       currentHigherNode = findNextNode(higherHeadNode, currentHigherNode);
