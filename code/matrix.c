@@ -315,7 +315,7 @@ int matrix_destroy(Matrix* m)
   
   if (m == NULL)
   {
-    fprintf(stderr, "Tentando destruir matriz não definidas.\n");
+    fprintf(stderr, "Tentando destruir matriz não definida.\n");
     return -1;
   }
   
@@ -368,10 +368,8 @@ int matrix_print(const Matrix* m)
 
 int matrix_add(const Matrix* m, const Matrix* n, Matrix** r)
 {
-  const Matrix *currentLowerNode, *currentHigherNode, *lowerHeadNode, *higherHeadNode, *proxyNode;
   Matrix* headNodeR;
   int64 ni, nj;
-  int64 lowerNodeIndex, higherNodeIndex;
   
   if (m == NULL || n == NULL)
   {
@@ -389,6 +387,29 @@ int matrix_add(const Matrix* m, const Matrix* n, Matrix** r)
   
   headNodeR = createMatrixHeaders(ni, nj);
   
+  matrix_addE(m, n, headNodeR);
+  
+  *r = headNodeR;
+  return 0;
+}
+
+int matrix_addE(const Matrix* m, const Matrix* n, Matrix* r)
+{
+  const Matrix *currentLowerNode, *currentHigherNode, *lowerHeadNode, *higherHeadNode, *proxyNode;
+  int64 lowerNodeIndex, higherNodeIndex;
+  
+  if (m == NULL || n == NULL)
+  {
+    fprintf(stderr, "Tentando somar uma ou duas matrizes não definidas.\n");
+    return -1;
+  }
+  
+  if (m->line != n->line || m->column != n->column)
+  {
+    fprintf( stderr, "Soma não definida: Matriz M: %" PRId64 "x%" PRId64 "; Matriz N: %" PRId64 "x%" PRId64 "\n", -m->line, -m->column, -n->line, -n->column);
+    return -1;
+  }
+  
   currentLowerNode = findNextNode(m, m);
   lowerHeadNode = m;
   currentHigherNode = findNextNode(n, n);
@@ -401,7 +422,7 @@ int matrix_add(const Matrix* m, const Matrix* n, Matrix** r)
     
     while (currentLowerNode != NULL && (currentHigherNode == NULL || lowerNodeIndex < higherNodeIndex))
     {
-      matrix_setelem(headNodeR, currentLowerNode->line, currentLowerNode->column, currentLowerNode->info);
+      matrix_setelem(r, currentLowerNode->line, currentLowerNode->column, currentLowerNode->info);
       currentLowerNode = findNextNode(lowerHeadNode, currentLowerNode);
       lowerNodeIndex = getMatrixIndex(lowerHeadNode, currentLowerNode);
     }
@@ -411,7 +432,7 @@ int matrix_add(const Matrix* m, const Matrix* n, Matrix** r)
       {
         break;
       }
-      matrix_setelem(headNodeR, currentLowerNode->line, currentLowerNode->column, currentLowerNode->info + currentHigherNode->info);
+      matrix_setelem(r, currentLowerNode->line, currentLowerNode->column, currentLowerNode->info + currentHigherNode->info);
       currentLowerNode = findNextNode(lowerHeadNode, currentLowerNode);
       currentHigherNode = findNextNode(higherHeadNode, currentHigherNode);
     }
@@ -428,16 +449,13 @@ int matrix_add(const Matrix* m, const Matrix* n, Matrix** r)
     }
   }
   
-  *r = headNodeR;
   return 0;
 }
 
 int matrix_subtract(const Matrix* m, const Matrix* n, Matrix** r)
 {
-  const Matrix *currentLowerNode, *currentHigherNode, *lowerHeadNode, *higherHeadNode, *proxyNode;
   Matrix* headNodeR;
   int64 ni, nj;
-  int64 lowerNodeIndex, higherNodeIndex;
   
   if (m == NULL || n == NULL)
   {
@@ -454,6 +472,29 @@ int matrix_subtract(const Matrix* m, const Matrix* n, Matrix** r)
   nj = -m->column;
   
   headNodeR = createMatrixHeaders(ni, nj);
+  
+  matrix_subtractE(m, n, headNodeR);
+  
+  *r = headNodeR;
+  return 0;
+}
+
+int matrix_subtractE(const Matrix* m, const Matrix* n, Matrix* r)
+{
+  const Matrix *currentLowerNode, *currentHigherNode, *lowerHeadNode, *higherHeadNode, *proxyNode;
+  int64 lowerNodeIndex, higherNodeIndex;
+  
+  if (m == NULL || n == NULL)
+  {
+    fprintf(stderr, "Tentando subtrair uma ou duas matrizes não definidas.\n");
+    return -1;
+  }
+  
+  if (m->line != n->line || m->column != n->column)
+  {
+    fprintf( stderr, "Subtração não definida: Matriz M: %" PRId64 "x%" PRId64 "; Matriz N: %" PRId64 "x%" PRId64 "\n", -m->line, -m->column, -n->line, -n->column);
+    return -1;
+  }
   
   currentLowerNode = findNextNode(m, m);
   lowerHeadNode = m;
@@ -472,7 +513,7 @@ int matrix_subtract(const Matrix* m, const Matrix* n, Matrix** r)
     
     while (currentLowerNode != NULL && (currentHigherNode == NULL || lowerNodeIndex < higherNodeIndex))
     {
-      matrix_setelem(headNodeR, currentLowerNode->line, currentLowerNode->column, mIsLower*currentLowerNode->info);
+      matrix_setelem(r, currentLowerNode->line, currentLowerNode->column, mIsLower*currentLowerNode->info);
       currentLowerNode = findNextNode(lowerHeadNode, currentLowerNode);
       lowerNodeIndex = getMatrixIndex(lowerHeadNode, currentLowerNode);
     }
@@ -482,7 +523,7 @@ int matrix_subtract(const Matrix* m, const Matrix* n, Matrix** r)
       {
         break;
       }
-      matrix_setelem(headNodeR, currentLowerNode->line, currentLowerNode->column, mIsLower*(currentLowerNode->info - currentHigherNode->info));
+      matrix_setelem(r, currentLowerNode->line, currentLowerNode->column, mIsLower*(currentLowerNode->info - currentHigherNode->info));
       currentLowerNode = findNextNode(lowerHeadNode, currentLowerNode);
       currentHigherNode = findNextNode(higherHeadNode, currentHigherNode);
     }
@@ -500,15 +541,11 @@ int matrix_subtract(const Matrix* m, const Matrix* n, Matrix** r)
       mIsLower = mIsLower*-1;
     }
   }
-  
-  *r = headNodeR;
   return 0;
 }
 
 int matrix_multiply(const Matrix* m, const Matrix* n, Matrix** r)
 {
-  const Matrix *currentMNode, *currentNNode;
-  Matrix *currentRNode;
   Matrix *headNodeR;
   
   if (m == NULL || n == NULL)
@@ -524,6 +561,28 @@ int matrix_multiply(const Matrix* m, const Matrix* n, Matrix** r)
   }
   
   headNodeR = createMatrixHeaders(-m->column, -n->line);
+  matrix_multiplyE(m, n, headNodeR);
+  
+  *r = headNodeR;
+  return 0;
+}
+
+int matrix_multiplyE(const Matrix* m, const Matrix* n, Matrix* r)
+{
+  const Matrix *currentMNode, *currentNNode;
+  Matrix *currentRNode;
+  
+  if (m == NULL || n == NULL)
+  {
+    fprintf(stderr, "Tentando multiplicar uma ou duas matrizes não definidas.\n");
+    return -1;
+  }
+
+  if (m->column != n->line || m->line != r->line || n->column != r->column)
+  {
+    fprintf( stderr, "Multiplicação de matrizes com dimensões incorretas, m: %" PRId64 " %" PRId64 ", n: %" PRId64 " %" PRId64 ", r: %" PRId64 " %" PRId64 ".\n", -m->line, -m->column, -n->line, -n->column, -r->line, -r->column);
+    return -1;
+  }
   
   /* assumes the matrix have about the same number of non-zero elements */
   currentNNode = findNextNode(n, n);
@@ -532,26 +591,24 @@ int matrix_multiply(const Matrix* m, const Matrix* n, Matrix** r)
     currentMNode = findPrevColumnNode(m, 0, currentNNode->line)->below;
     while (currentMNode->line != -1)
     {
-      currentRNode = findNode(headNodeR, currentMNode->line, currentNNode->column);
+      currentRNode = findNode(r, currentMNode->line, currentNNode->column);
       if (currentRNode == NULL)
       {
-        matrix_setelem(headNodeR, currentMNode->line, currentNNode->column, currentMNode->info * currentNNode->info);
+        matrix_setelem(r, currentMNode->line, currentNNode->column, currentMNode->info * currentNNode->info);
       }
       else
       {
-        matrix_setelem(headNodeR, currentMNode->line, currentNNode->column, currentRNode->info + currentMNode->info * currentNNode->info);
+        matrix_setelem(r, currentMNode->line, currentNNode->column, currentRNode->info + currentMNode->info * currentNNode->info);
       }
       currentMNode = currentMNode->below;
     }
     currentNNode = findNextNode(n, currentNNode);
   }
-  *r = headNodeR;
   return 0;
 }
 
 int matrix_transpose(const Matrix* m, Matrix** r)
 {
-  const Matrix *currentNode;
   Matrix *headNodeR;
   int64 ni, nj;
   
@@ -563,16 +620,31 @@ int matrix_transpose(const Matrix* m, Matrix** r)
   
   ni = -m->line;
   nj = -m->column;
-  
   headNodeR = createMatrixHeaders(nj, ni);
+  
+  matrix_transposeE(m, headNodeR);
+  
+  *r = headNodeR;
+  return 0;
+}
+
+int matrix_transposeE(const Matrix* m, Matrix* r)
+{
+  const Matrix *currentNode;
+  
+  if (m == NULL || r == NULL)
+  {
+    fprintf(stderr, "Tentando transpor matriz não definidas.\n");
+    return -1;
+  }
   
   currentNode = findNextNode(m, m);
   while (currentNode != NULL)
   {
-    matrix_setelem(headNodeR, currentNode->column, currentNode->line, currentNode->info);
+    matrix_setelem(r, currentNode->column, currentNode->line, currentNode->info);
     currentNode = findNextNode(m, currentNode);
   }
-  *r = headNodeR;
+  
   return 0;
 }
 
@@ -726,4 +798,132 @@ int matrix_sumelem( Matrix* m, int64 x, int64 y, double elem)
     prevRowNode->right->info = temp;
     return 0;
   }
+}
+
+int matrix_scalarmult(double alfa, const Matrix* m, Matrix** r)
+{
+  Matrix *currentNode;
+  Matrix *headNodeR;
+  int64 ni, nj;
+  
+  if (m == NULL)
+  {
+    fprintf(stderr, "Matriz não definida.\n");
+    return -1;
+  }
+  
+  ni = -m->line;
+  nj = -m->column;
+  headNodeR = createMatrixHeaders(ni, nj);
+  
+  double temp;
+  for (currentNode = findNextNode(m, m); currentNode != NULL; currentNode = findNextNode(m, currentNode))
+  {
+    temp = currentNode->info * alfa;
+    if (!floatIsZero(temp))
+    {
+      matrix_setelem(headNodeR, currentNode->line, currentNode->column, temp);
+    }
+  }
+  *r = headNodeR;
+  return 0;
+}
+
+double matrix_internalProduct(const Matrix* m, const Matrix* n)
+{
+  const Matrix *currentLowerNode, *currentHigherNode, *lowerHeadNode, *higherHeadNode, *proxyNode;
+  int64 ni, nj;
+  int64 lowerNodeIndex, higherNodeIndex;
+  
+  if (m == NULL || n == NULL)
+  {
+    fprintf(stderr, "Tentando fazer o produto interno entre uma ou duas matrizes não definidas.\n");
+    return -1;
+  }
+  
+  if (m->line != n->line || m->column != n->column)
+  {
+    fprintf( stderr, "Produto interno não definido: Matriz M: %" PRId64 "x%" PRId64 "; Matriz N: %" PRId64 "x%" PRId64 "\n", -m->line, -m->column, -n->line, -n->column);
+    return -1;
+  }
+  ni = -m->line;
+  nj = -m->column;
+  
+  currentLowerNode = findNextNode(m, m);
+  lowerHeadNode = m;
+  currentHigherNode = findNextNode(n, n);
+  higherHeadNode = n;
+  
+  double sum = 0;
+  
+  while (currentLowerNode != NULL || currentHigherNode != NULL)
+  {
+    lowerNodeIndex = getMatrixIndex(lowerHeadNode, currentLowerNode);
+    higherNodeIndex = getMatrixIndex(higherHeadNode, currentHigherNode);
+    
+    while (currentLowerNode != NULL && (currentHigherNode == NULL || lowerNodeIndex < higherNodeIndex))
+    {
+      currentLowerNode = findNextNode(lowerHeadNode, currentLowerNode);
+      lowerNodeIndex = getMatrixIndex(lowerHeadNode, currentLowerNode);
+    }
+    if (lowerNodeIndex == higherNodeIndex)
+    {
+      if (lowerNodeIndex == -1)
+      {
+        break;
+      }
+      sum += currentLowerNode->info * currentHigherNode->info;
+      currentLowerNode = findNextNode(lowerHeadNode, currentLowerNode);
+      currentHigherNode = findNextNode(higherHeadNode, currentHigherNode);
+    }
+    else
+    {
+      /* switch the lower and higher nodes */
+      proxyNode = currentLowerNode;
+      currentLowerNode = currentHigherNode;
+      currentHigherNode = proxyNode;
+      
+      proxyNode = lowerHeadNode;
+      lowerHeadNode = higherHeadNode;
+      higherHeadNode = proxyNode;
+    }
+  }
+    
+  return sum;
+}
+
+int matrix_copy(const Matrix* m, Matrix** r)
+{
+  const Matrix *currentNode;
+  Matrix *headNodeR;
+  int64 ni, nj;
+  
+  if (m == NULL)
+  {
+    fprintf(stderr, "Tentando transpor matriz não definidas.\n");
+    return -1;
+  }
+  
+  ni = -m->line;
+  nj = -m->column;
+  
+  headNodeR = createMatrixHeaders(ni, nj);
+  
+  for (currentNode = findNextNode(m, m); currentNode != NULL; currentNode = findNextNode(m, currentNode))
+  {
+    matrix_setelem(headNodeR, currentNode->line, currentNode->column, currentNode->info);
+  }
+  
+  *r = headNodeR;
+  return 0;
+}
+
+int64 matrix_ni(const Matrix* m)
+{
+  return m->line;
+}
+
+int64 matrix_nj(const Matrix* m)
+{
+  return m->column;
 }

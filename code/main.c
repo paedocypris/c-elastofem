@@ -3,6 +3,8 @@
 #include <inttypes.h>
 #include "matrix.h"
 
+#define TOL 1e-6
+
 typedef int8_t int8;
 typedef int16_t int16;
 typedef int32_t int32;
@@ -35,7 +37,7 @@ int createElements(int64 *nElem, Element **elements);
 int computeGlobalMatrices(const int64 nElem, const Element *elementsArray, const int64 nNode, const Node *nodesArray);
 int computeElementStiffness(Matrix *stifMatrix, const Element *element, const Node *nodes);
 
-int conjugateGradientMethod(int64 ni, int64 nj, Matrix *a, Matrix *x, Matrix *b);
+int conjugateGradientMethod(const Matrix *a, const Matrix *x, const Matrix *b, Matrix **result);
 
 
 int main( void ) {
@@ -193,18 +195,23 @@ int computeElementStiffness(Matrix *stifMatrix, const Element *element, const No
   return 0;
 }
 
-int conjugateGradientMethod(int64 ni, int64 nj, Matrix *a, Matrix *x, Matrix *b)
+int conjugateGradientMethod(const Matrix *a, const Matrix *x, const Matrix *b, Matrix **result)
 {
-  // double c, t, d;
-  Matrix *p, *r, *temp;
-  matrix_create(&p, nj, 1);
-  matrix_create(&r, nj, 1);
-  matrix_create(&temp, nj, 1);
+  double c, t, d;
+  Matrix  *p = NULL, 
+          *r = NULL, 
+          *temp = NULL, 
+          *z = NULL, 
+          *nextVector = NULL, 
+          *prevVector = NULL;
+  
+  Matrix *curX;
+  matrix_copy(x, &curX);
   
   /* r = b - Ax;
      p = r;
      c = (r,r);
-     for (k = 0 to M) do
+     for (i = 0 to M) do
        if (p,p)^0.5 < tolA then exit loop;
        z = Ap;
        t = c / (p,z);
@@ -216,53 +223,88 @@ int conjugateGradientMethod(int64 ni, int64 nj, Matrix *a, Matrix *x, Matrix *b)
        c = d;
      end do */
      
-   /* r = b - Ax 
-  matrix_multiply(a, x, temp);
-  matrix_subtract(b, temp, r);
+   /* r = b - Ax */
+  matrix_multiply(a, curX, &temp);
+  matrix_subtract(b, temp, &r);
   
-  multMatrix (ni, nj, a, nj, 1, x, temp);
-  subtractVector(nj, b, temp, r);
+  matrix_destroy(temp);
+  temp = NULL;
   
-  /* p = r 
-  copyVector(nj, r, p);
+  /* p = r */
+  matrix_copy(r, &p);
   
-  /* c = (r,r) 
-  c = internalProduct(nj, r, r);
+  /* c = (r,r) */
+  c = matrix_internalProduct(r, r);
   
+  /* for (i = 0 to M) do */
   int i;
-  for (i = 0; i < M; i++)
+  for (i = 0; i < matrix_ni(b); i++)
   {
-    if (internalProduct(nj, p, p) < TOL) break;
+    /* if (p,p)^0.5 < tolA then exit loop; */
+    if (matrix_internalProduct(p, p) < TOL) break;
     
-    /* z = Ap 
-    multMatrix(ni, nj, a, nj, 1, p, temp);
+    /* z = Ap */
+    matrix_multiply(a, p, &z);
     
-    /* t = c / (p,z) 
-    t = c / internalProduct(nj, p, temp);
+    /* t = c / (p,z) */
+    t = c / matrix_internalProduct(p, z);
     
-    /* x = x + tp; 
-    addVectorScalar(nj, x, p, t, x);
+    /* x = x + tp */
+    matrix_scalarmult(t, p, &temp);
+    matrix_add(curX, temp, &nextVector);
+    prevVector = curX;
+    curX = nextVector;
+    nextVector=NULL;
     
-    /* r = r - tz; 
-    addVectorScalar(nj, r, temp, -t, r);
+    matrix_destroy(prevVector);
+    prevVector=NULL;
+    matrix_destroy(temp);
+    temp = NULL;
     
-    /* d = (r,r) 
-    d = internalProduct(nj, r, r);
+    /* r = r - tz */
+    matrix_scalarmult(t,z, &temp);
+    matrix_subtract(r, temp, &nextVector);
+    prevVector = r;
+    r = nextVector;
+    nextVector=NULL;
     
-    /*   if (d < tolB) then exit loop; 
+    matrix_destroy(prevVector);
+    prevVector=NULL;
+    matrix_destroy(temp);
+    temp = NULL;
+    matrix_destroy(z);
+    z = NULL;
+    
+    /* d = (r,r) */
+    d = matrix_internalProduct(r, r);
+    
+    /*   if (d < tolB) then exit loop */
     if (d < TOL) break;
     
-    /* p = r + (d/c)p; 
-    addVectorScalar(nj, r, p, d/c, p);
+    /* p = r + (d/c)p */
+    matrix_scalarmult(d/c, p, &temp);
+    matrix_add(r, temp, &nextVector);
+    prevVector = p;
+    p = nextVector;
+    nextVector = NULL;
     
-    /* c = d; 
+    matrix_destroy(prevVector);
+    prevVector=NULL;
+    matrix_destroy(temp);
+    temp = NULL;
+    
+    /* c = d */
     c = d;
   }
-  TODO: DEstroy this   */
   
-  matrix_destroy(p);
-  matrix_destroy(r);
-  matrix_destroy(temp);
+  if (p != NULL || r != NULL || 
+        temp != NULL || z != NULL || 
+        prevVector != NULL || nextVector != NULL)
+  {
+    fprintf(stderr, "Memory Leak: conjugateGradientMethod.\n");
+    return -1;
+  }
+  *result = curX;
   
   return 0;
 }
