@@ -19,23 +19,47 @@ struct node {
   int64 index;
   double x;
   double y;
+  double u;
 };
-
 typedef struct node Node;
 
 struct element {
   int64 index;
+  int64 material;
   int64 n0;
   int64 n1;
   int64 n2;
 };
-
 typedef struct element Element;
 
-int createNodes(int64 *nNode, Node **nodes);
-int createElements(int64 *nElem, Element **elements);
+struct material {
+  int64 index;
+  double e;
+  double f;
+};
+typedef struct material Material;
+
+struct dirichletBC {
+  int64 nodeIndex;
+  double value;
+};
+typedef struct dirichletBC DirichletBC;
+
+struct neumannBC {
+  int64 elementIndex;
+  int64 nSide;
+  double value;
+};
+typedef struct neumannBC NeumannBC;
+
+int readNodes(int64 *nNode, Node **nodes);
+int readElements(int64 *nElem, Element **elements);
+int readMaterials(int64 *nMaterial, Material **materials);
+int readBC(int64 *nDirich, DirichletBC **dirBound, int64 *nNeumann, NeumannBC **neuBound);
+
+
 int computeGlobalMatrices(const int64 nElem, const Element *elementsArray, const int64 nNode, const Node *nodesArray);
-int computeElementStiffness(Matrix *stifMatrix, const Element *element, const Node *nodes);
+int eleN3P3(Matrix *stifMatrix, const Element *element, const Node *nodes);
 
 int conjugateGradientMethod(const Matrix *a, const Matrix *x, const Matrix *b, Matrix **result);
 
@@ -46,13 +70,26 @@ int main( void ) {
   
   int64 nElement;
   Element *elements;
+  
+  int64 nMaterial;
+  Material *materials;
+  
+  int64 nDirichlet;
+  DirichletBC *dirBound;
+  
+  int64 nNeumann;
+  NeumannBC *neuBound;
+  
   /*
   unsigned nDOF;
   */
   
+  /* (a) Input of data */
   /* (b) Representation of the triangulation Th. */
-  createNodes(&nNode, &nodes);
-  createElements(&nElement, &elements);
+  readNodes(&nNode, &nodes);
+  readElements(&nElement, &elements);
+  readBC(&nDirichlet, &dirBound, &nNeumann, &neuBound);
+  readMaterials(&nMaterial, &materials);
   
   /* (c) Computation of the element stiffness matrices aK and element loads bK. */
   /* (d) Assembly of the global stiffness matrix A and load vector b. */
@@ -70,7 +107,7 @@ int main( void ) {
   return 0;
 }
 
-int createNodes(int64 *nNode, Node **nodes)
+int readNodes(int64 *nNode, Node **nodes)
 {
   int64 n;
 
@@ -104,7 +141,7 @@ int createNodes(int64 *nNode, Node **nodes)
   return 0;
 }
 
-int createElements(int64 *nElem, Element **elements)
+int readElements(int64 *nElem, Element **elements)
 {
   int64 n;
 
@@ -138,6 +175,79 @@ int createElements(int64 *nElem, Element **elements)
   return 0;
 }
 
+int readMaterials(int64 *nMaterial, Material **materials)
+{
+  int64 n;
+
+  FILE *fp;
+  fp = fopen("bar.mat", "r");
+  fscanf(fp, "%" SCNd64 "%*[^\n]", &n);
+  if (n < 1)
+  {
+    fprintf(stderr, "No materials to be read\n");
+    fclose(fp);
+    return 1;
+  }
+  
+  /* There are materials, allocate memory and reads them */
+  Material *newMaterials = malloc(n * sizeof(Material));
+  int64 i;
+  double e, density;
+  int64 index;
+  for (i = 0; i < n; i++)
+  {
+    fscanf(fp, "%" SCNd64" %lf %lf*\n", &index, &e, &density);
+    (*(newMaterials + i)).index = index;
+    (*(newMaterials + i)).e = e;
+    (*(newMaterials + i)).f = density * 9.80665;
+  }
+  
+  *nMaterial = n;
+  *materials = newMaterials;
+  
+  fclose(fp);
+  
+  return 0;
+}
+
+int readBC(int64 *nDirich, DirichletBC **dirBound, int64 *nNeumann, NeumannBC **neuBound)
+{
+  int64 n;
+
+  FILE *fp;
+  fp = fopen("bar.bc", "r");
+  fscanf(fp, "%" SCNd64 "*\n", &n);
+  if (n < 1)
+  {
+    fprintf(stderr, "No dirichlet boundary conditions to be read\n");
+    fclose(fp);
+    return 1;
+  }
+  
+  /* There are bcs, allocate memory and reads them */
+  DirichletBC *dirBC = malloc(n * sizeof(DirichletBC));
+  
+  int64 i;
+  int64 nodeIndex;
+  double value;
+  for (i = 0; i < n; i++)
+  {
+    fscanf(fp, "%" SCNd64" %lf*\n", &nodeIndex, &value);
+    (*(dirBC + i)).nodeIndex = nodeIndex;
+    (*(dirBC + i)).value = value;
+  }
+  
+  *nDirich = n;
+  *dirBound = dirBC;
+  
+  *nNeumann = 0;
+  *neuBound = NULL;
+  
+  fclose(fp);
+  
+  return 0;
+}
+
 int computeGlobalMatrices(const int64 nElem, const Element *elementsArray, const int64 nNode, const Node *nodesArray)
 {
   Matrix *stifMatrix;
@@ -146,13 +256,13 @@ int computeGlobalMatrices(const int64 nElem, const Element *elementsArray, const
   int i;
   for (i = 0; i < nElem; i++)
   {
-    computeElementStiffness(stifMatrix, &elementsArray[i],nodesArray);
+    eleN3P3(stifMatrix, &elementsArray[i],nodesArray);
     matrix_print(stifMatrix);
   }
   return 0;
 }
 
-int computeElementStiffness(Matrix *stifMatrix, const Element *element, const Node *nodes)
+int eleN3P3(Matrix *stifMatrix, const Element *element, const Node *nodes)
 {
   double a0, a1, a2;
   double b0, b1, b2;
@@ -308,3 +418,4 @@ int conjugateGradientMethod(const Matrix *a, const Matrix *x, const Matrix *b, M
   
   return 0;
 }
+
