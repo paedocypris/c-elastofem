@@ -57,11 +57,12 @@ int readElements(int64 *nElem, Element **elements);
 int readMaterials(int64 *nMaterial, Material **materials);
 int readBC(int64 *nDirich, DirichletBC **dirBound, int64 *nNeumann, NeumannBC **neuBound);
 
-
-int computeGlobalMatrices(const int64 nElem, const Element *elementsArray, const int64 nNode, const Node *nodesArray);
-int eleN3P3(Matrix *stifMatrix, const Element *element, const Node *nodes);
+int computeGlobalMatrices(const int64 nElem, const Element *elementsArray, const int64 nNode, const Node *nodesArray, const int64 nDirichlet, const DirichletBC *dirBound, const int64 nEquations, const int64 *nodeEquation, const Material *elemMaterial);
+int eleN3P3(Matrix *stifMatrix, Matrix *b, const Element *element, const Node *nodes, const int64 nDirichlet, const DirichletBC *dirBound, const int64 *nodeEquation, const Material *elemMaterial);
 
 int conjugateGradientMethod(const Matrix *a, const Matrix *x, const Matrix *b, Matrix **result);
+
+static const DirichletBC* findElementInArray(const int64 node, const int64 nDirichlet, const DirichletBC *dirBound);
 
 
 int main( void ) {
@@ -91,14 +92,19 @@ int main( void ) {
   readBC(&nDirichlet, &dirBound, &nNeumann, &neuBound);
   readMaterials(&nMaterial, &materials);
   
+  /* find numbers of equations and builds the transformation array */
+  int64 nEquations;
+  int64 *nodeEquation; /* in each position will be the position of the corresponding equation */
+  nEquations = nNode - nDirichlet;
+  nodeEquation = malloc(nNode*sizeof(int64));
+  
   /* (c) Computation of the element stiffness matrices aK and element loads bK. */
   /* (d) Assembly of the global stiffness matrix A and load vector b. */
-  computeGlobalMatrices( nElement, elements, nNode, nodes);
+  computeGlobalMatrices( nElement, elements, nNode, nodes, nDirichlet, dirBound, nEquations, nodeEquation, materials);
   
   /* (e) Solution of the system of equations Ax = b. */
   /* TODO: calc (f,b) */
-  Matrix *b;
-  matrix_create(&b, nNode, 1);
+  
   Matrix *x;
   matrix_create(&x, nNode, 1);
   
@@ -248,26 +254,35 @@ int readBC(int64 *nDirich, DirichletBC **dirBound, int64 *nNeumann, NeumannBC **
   return 0;
 }
 
-int computeGlobalMatrices(const int64 nElem, const Element *elementsArray, const int64 nNode, const Node *nodesArray)
+int computeGlobalMatrices(const int64 nElem, const Element *elementsArray, const int64 nNode, const Node *nodesArray, const int64 nDirichlet, const DirichletBC *dirBound, const int64 nEquations, const int64 *nodeEquation, const Material *elemMaterial)
 {
   Matrix *stifMatrix;
-  matrix_create(&stifMatrix, nNode, nNode);
+  matrix_create(&stifMatrix, nEquations, nEquations);
+  
+  Matrix *bMatrix;
+  matrix_create(&bMatrix, nEquations, 1);
   
   int i;
   for (i = 0; i < nElem; i++)
   {
-    eleN3P3(stifMatrix, &elementsArray[i],nodesArray);
+    eleN3P3(stifMatrix, bMatrix, &elementsArray[i], nodesArray, nDirichlet, dirBound, nodeEquation, &elemMaterial[elementsArray[i].material]);
+    
     matrix_print(stifMatrix);
   }
   return 0;
 }
 
-int eleN3P3(Matrix *stifMatrix, const Element *element, const Node *nodes)
+int eleN3P3(Matrix *stifMatrix, Matrix *b, const Element *element, const Node *nodes, const int64 nDirichlet, const DirichletBC *dirBound, const int64 *nodeEquation, const Material *elemMaterial)
 {
   double a0, a1, a2;
   double b0, b1, b2;
-  double det;
-  
+  double det, den, area;
+
+/*
+  int64 nNeumann;
+  NeumannBC *neuBound;
+*/
+
   double k00, k01, k02, k11, k12, k22;
   
   const Node *n0, *n1, *n2;
@@ -275,8 +290,14 @@ int eleN3P3(Matrix *stifMatrix, const Element *element, const Node *nodes)
   n1 = &nodes[element->n1];
   n2 = &nodes[element->n2];
   
+  const int64 eqNode0 = nodeEquation[element->n0];
+  const int64 eqNode1 = nodeEquation[element->n1];
+  const int64 eqNode2 = nodeEquation[element->n2];
+  
   /* calc auxiliar parameters */
   det = n0->x*n1->y + n0->y*n2->x + n1->x*n2->y - n1->y*n2->x - n2->y*n0->x - n0->y*n1->x;
+  den = det*2;
+  area = det/2;
   a0 = n1->y - n2->y;
   a1 = n2->y - n0->y;
   a2 = n0->y - n1->y;
@@ -284,7 +305,6 @@ int eleN3P3(Matrix *stifMatrix, const Element *element, const Node *nodes)
   b1 = n0->x - n2->x;
   b2 = n1->x - n0->x;
   
-  double den = det*2;
   k00 = (a0*a0 + b0*b0)/den;
   k01 = (a0*a1 + b0*b1)/den;
   k02 = (a0*a2 + b0*b2)/den;
@@ -292,15 +312,68 @@ int eleN3P3(Matrix *stifMatrix, const Element *element, const Node *nodes)
   k12 = (a1*a2 + b1*b2)/den;
   k22 = (a2*a2 + b2*b2)/den;
   
-  matrix_sumelem(stifMatrix, element->n0, element->n0, k00); /* K00 */
-  matrix_sumelem(stifMatrix, element->n0, element->n1, k01); /* K01 */
-  matrix_sumelem(stifMatrix, element->n0, element->n2, k02); /* K02 */
-  matrix_sumelem(stifMatrix, element->n1, element->n0, k01); /* K10 */
-  matrix_sumelem(stifMatrix, element->n1, element->n1, k11); /* K11 */
-  matrix_sumelem(stifMatrix, element->n1, element->n2, k12); /* K12 */
-  matrix_sumelem(stifMatrix, element->n2, element->n0, k02); /* K20 */
-  matrix_sumelem(stifMatrix, element->n2, element->n1, k12); /* K21 */
-  matrix_sumelem(stifMatrix, element->n2, element->n2, k22); /* K22 */
+  const DirichletBC *dirNode0, *dirNode1, *dirNode2;
+  dirNode0 = findElementInArray(element->n0, nDirichlet, dirBound);
+  dirNode1 = findElementInArray(element->n1, nDirichlet, dirBound);
+  dirNode2 = findElementInArray(element->n2, nDirichlet, dirBound);
+  
+  if (dirNode0 == NULL)
+  {
+    matrix_sumelem(stifMatrix, eqNode0, eqNode0, k00); /* K00 */
+    matrix_sumelem(stifMatrix, eqNode0, eqNode1, k01); /* K01 */
+    matrix_sumelem(stifMatrix, eqNode0, eqNode2, k02); /* K02 */
+    matrix_sumelem(b, eqNode0, 0, elemMaterial->f/elemMaterial->e *area);
+  }
+  if (dirNode1 == NULL)
+  {
+    matrix_sumelem(stifMatrix, eqNode1, eqNode0, k01); /* K10 */
+    matrix_sumelem(stifMatrix, eqNode1, eqNode1, k11); /* K11 */
+    matrix_sumelem(stifMatrix, eqNode1, eqNode2, k12); /* K12 */
+    matrix_sumelem(b, eqNode1, 0, elemMaterial->f/elemMaterial->e *area);
+  }
+  if (dirNode2 == NULL)
+  {
+    matrix_sumelem(stifMatrix, eqNode2, eqNode0, k02); /* K20 */
+    matrix_sumelem(stifMatrix, eqNode2, eqNode1, k12); /* K21 */
+    matrix_sumelem(stifMatrix, eqNode2, eqNode2, k22); /* K22 */
+    matrix_sumelem(b, eqNode2, 0, elemMaterial->f/elemMaterial->e *area);
+  }
+  
+  int conditionNumber = 0;
+  if (dirNode0 != NULL) conditionNumber += 1; /* node 0 has prescribed value */
+  if (dirNode1 != NULL) conditionNumber += 2; /* node 1 has prescribed value */
+  if (dirNode2 != NULL) conditionNumber += 4; /* node 2 has prescribed value */
+  
+  switch (conditionNumber)
+  {
+    case 0: /* no dirichlet nodes */
+      break;
+    case 1: /* node 0 is a dirichlet node */
+      matrix_sumelem(b, eqNode1, 0, -k01*dirNode1->value);
+      matrix_sumelem(b, eqNode2, 0, -k02*dirNode2->value);
+      break;
+    case 2: /* node 1 is a dirichlet node */
+      matrix_sumelem(b, eqNode0, 0, -k01*dirNode0->value);
+      matrix_sumelem(b, eqNode2, 0, -k12*dirNode2->value);
+      break;
+    case 3: /* nodes 0 and 1 are dirichlet nodes */
+      matrix_sumelem(b, eqNode2, 0, -k02*dirNode0->value - k12*dirNode1->value);
+      break;
+    case 4: /* node 2 is a dirichlet node */
+      matrix_sumelem(b, eqNode0, 0, -k02*dirNode0->value);
+      matrix_sumelem(b, eqNode1, 0, -k12*dirNode2->value);
+      break;
+    case 5: /* nodes 0 and 2 are dirichlet nodes */
+      matrix_sumelem(b, eqNode1, 0, -k01*dirNode0->value - k12*dirNode2->value);
+      break;
+    case 6: /* nodes 1 and 2 are dirichlet nodes */
+      matrix_sumelem(b, eqNode0, 0, -k01*dirNode1->value - k02*dirNode2->value);
+      break;
+    case 7: /* all nodes are dirichlet nodes */
+      break;
+    default:
+      break;
+  }
   
   return 0;
 }
@@ -419,3 +492,13 @@ int conjugateGradientMethod(const Matrix *a, const Matrix *x, const Matrix *b, M
   return 0;
 }
 
+static const DirichletBC* findElementInArray(const int64 node, const int64 nDirichlet, const DirichletBC *dirBound)
+{
+  int i;
+  for (i = 0; i < nDirichlet; i++)
+  {
+    if (dirBound[i].nodeIndex == node)
+      return dirBound+i;
+  }
+  return NULL;
+}
