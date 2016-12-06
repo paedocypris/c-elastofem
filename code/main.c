@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <inttypes.h>
 #include "matrix.h"
+#include "math.h"
 
 #define TOL 1e-6
 
@@ -16,70 +17,97 @@ typedef uint32_t uint32;
 typedef uint64_t uint64;
 
 struct node {
-  int64 index;
+  uint32 index;
   double x;
   double y;
   double u;
 };
 typedef struct node Node;
 
+struct nodeArray {
+  uint32 len;
+  Node *ptr;
+};
+typedef struct nodeArray NodeArray;
+
 struct element {
-  int64 index;
-  int64 material;
-  int64 n0;
-  int64 n1;
-  int64 n2;
+  uint32 index;
+  uint32 material;
+  uint32 n0;
+  uint32 n1;
+  uint32 n2;
 };
 typedef struct element Element;
 
+struct elementArray{
+  uint32 len;
+  Element *ptr;
+};
+typedef struct elementArray ElementArray;
+
 struct material {
-  int64 index;
+  uint32 index;
   double e;
   double f;
 };
 typedef struct material Material;
 
 struct dirichletBC {
-  int64 nodeIndex;
+  uint32 nodeIndex;
   double value;
 };
 typedef struct dirichletBC DirichletBC;
 
 struct neumannBC {
-  int64 elementIndex;
+  uint32 elementIndex;
   int64 nSide;
   double value;
 };
 typedef struct neumannBC NeumannBC;
 
-int readNodes(int64 *nNode, Node **nodes);
-int readElements(int64 *nElem, Element **elements);
-int readMaterials(int64 *nMaterial, Material **materials);
-int readBC(int64 *nDirich, DirichletBC **dirBound, int64 *nNeumann, NeumannBC **neuBound);
+int readNodes(NodeArray *nodes, char *fileName);
+int readElements(ElementArray *elements, char *fileName);
+int readMaterials(uint32 *nMaterial, Material **materials, char *fileName);
+int readBC(uint32 *nDirich, DirichletBC **dirBound, uint32 *nNeumann, NeumannBC **neuBound, char *fileName);
 
-int computeGlobalMatrices(const int64 nElem, const Element *elementsArray, const int64 nNode, const Node *nodesArray, const int64 nDirichlet, const DirichletBC *dirBound, const int64 nEquations, const int64 *nodeEquation, const Material *elemMaterial);
-int eleN3P3(Matrix *stifMatrix, Matrix *b, const Element *element, const Node *nodes, const int64 nDirichlet, const DirichletBC *dirBound, const int64 *nodeEquation, const Material *elemMaterial);
+int computeGlobalMatrices(Matrix **a, Vector **b, const ElementArray *elements, const NodeArray *nodes, const uint32 nDirichlet, const DirichletBC *dirBound, const uint32 nEquations, const int64 *nodeEquation, const Material *elemMaterial);
 
-int conjugateGradientMethod(const Matrix *a, const Matrix *x, const Matrix *b, Matrix **result);
-
-static const DirichletBC* findElementInArray(const int64 node, const int64 nDirichlet, const DirichletBC *dirBound);
+int eleN3P3(Matrix *stifMatrix, Vector *b, const Element *element, const NodeArray *nodes, const uint32 nDirichlet, const DirichletBC *dirBound, const int64 *nodeEquation, const Material *elemMaterial);
 
 
-int main( void ) {
-  int64 nNode;
-  Node *nodes;
+int conjugateGradientMethod(const MatrixCRS *a, Vector *x, const Vector *b);
+
+static DirichletBC* findElementInArray(const int64 nodeIndex, const int64 nDirichlet, const DirichletBC *dirBound);
+
+
+int main( int argc, char *argv[] ) 
+{
+  NodeArray nodes;
+  ElementArray elements;
   
-  int64 nElement;
-  Element *elements;
-  
-  int64 nMaterial;
+  uint32 nMaterial;
   Material *materials;
   
-  int64 nDirichlet;
+  uint32 nDirichlet;
   DirichletBC *dirBound;
   
-  int64 nNeumann;
+  uint32 nNeumann;
   NeumannBC *neuBound;
+  
+  /* read arguments */
+  char *fileName;
+  if( argc == 2 ) 
+  {
+    fileName = argv[1];
+  }
+  else if( argc > 2 ) {
+    fprintf(stderr, "Muitos argumentos submetidos.\n");
+    return 1;
+  }
+  else {
+    fprintf(stderr, "Passar o nome do arquivo.\n");
+    return 1;
+  }
   
   /*
   unsigned nDOF;
@@ -87,39 +115,67 @@ int main( void ) {
   
   /* (a) Input of data */
   /* (b) Representation of the triangulation Th. */
-  readNodes(&nNode, &nodes);
-  readElements(&nElement, &elements);
-  readBC(&nDirichlet, &dirBound, &nNeumann, &neuBound);
-  readMaterials(&nMaterial, &materials);
+  readNodes(&nodes, fileName);
+  readElements(&elements, fileName);
+  readBC(&nDirichlet, &dirBound, &nNeumann, &neuBound, fileName);
+  readMaterials(&nMaterial, &materials, fileName);
   
   /* find numbers of equations and builds the transformation array */
-  int64 nEquations;
-  int64 *nodeEquation; /* in each position will be the position of the corresponding equation */
-  nEquations = nNode - nDirichlet;
-  nodeEquation = malloc(nNode*sizeof(int64));
+  uint32 nEquations = (uint32)(nodes.len - nDirichlet);
+  int64 *nodeEquation = malloc(nodes.len * sizeof(int64)); /* in each position will be the position of the corresponding equation */
+  
+  uint32 i = 0;
+  uint32 nodeIdx = 0;
+  while(i < nodes.len)
+  {
+    const DirichletBC *found = findElementInArray(i, nDirichlet, dirBound);
+    if (found == NULL)
+    {
+      nodeEquation[i] = nodeIdx;
+      nodeIdx++;
+    }
+    else
+    {
+      nodeEquation[i] = -1;
+    }
+    i++;
+  }
   
   /* (c) Computation of the element stiffness matrices aK and element loads bK. */
   /* (d) Assembly of the global stiffness matrix A and load vector b. */
-  computeGlobalMatrices( nElement, elements, nNode, nodes, nDirichlet, dirBound, nEquations, nodeEquation, materials);
+  Matrix *a;
+  Vector *b;
+  computeGlobalMatrices(&a, &b, &elements, &nodes, nDirichlet, dirBound, nEquations, nodeEquation, materials);
   
   /* (e) Solution of the system of equations Ax = b. */
   /* TODO: calc (f,b) */
-  
-  Matrix *x;
-  matrix_create(&x, nNode, 1);
+  MatrixCRS *aCrs; 
+  matrixcrs_create(a, &aCrs);
+  Vector *x;
+  vector_create(&x, nEquations);
+  conjugateGradientMethod(aCrs, x, b);
   
   /* (f) Presentation of result. */
+  vector_print(x);
 
   return 0;
 }
 
-int readNodes(int64 *nNode, Node **nodes)
+int readNodes(NodeArray *nodes, char *fileName)
 {
-  int64 n;
+  uint32 n;
 
   FILE *fp;
-  fp = fopen("bar.node", "r");
-  fscanf(fp, "%" SCNd64 " %*[^\n]", &n);
+  char fullPath[80];
+  snprintf(fullPath, sizeof(fullPath), "%s.node", fileName);
+  fp = fopen(fullPath, "r");
+  if (fp == NULL)
+  {
+    fprintf(stderr, "Cannot open file %s.\n", fullPath);
+    return 1;
+  }
+  
+  fscanf(fp, "%" SCNu32 " %*[^\n]", &n);
   if (n < 1)
   {
     fprintf(stderr, "No nodes to be read\n");
@@ -128,32 +184,38 @@ int readNodes(int64 *nNode, Node **nodes)
   }
   
   /* There are nodes, allocate memory and reads them */
-  Node *newNodes = malloc(n * sizeof(Node));
-  int64 i;
+  nodes->ptr = malloc(n * sizeof(Node));
+  uint32 i;
   double x, y;
-  int64 index;
+  uint32 index;
   for (i = 0; i < n; i++)
   {
-    fscanf(fp, "%" SCNd64" %lf %lf %*[^\n]\n", &index, &x, &y);
-    (*(newNodes + i)).index = index;
-    (*(newNodes + i)).x = x;
-    (*(newNodes + i)).y = y;
+    fscanf(fp, "%" SCNu32" %lf %lf %*[^\n]\n", &index, &x, &y);
+    (nodes->ptr + i)->index = index;
+    (nodes->ptr + i)->x = x;
+    (nodes->ptr + i)->y= y;
   }
-  
-  *nodes = newNodes;
-  *nNode = n;
+  nodes->len = n;
   
   fclose(fp);
   return 0;
 }
 
-int readElements(int64 *nElem, Element **elements)
+int readElements(ElementArray *elements, char *fileName)
 {
-  int64 n;
+  uint32 n;
 
   FILE *fp;
-  fp = fopen("bar.ele", "r");
-  fscanf(fp, "%" SCNd64 " %*[^\n]", &n);
+  char fullPath[80];
+  snprintf(fullPath, sizeof(fullPath), "%s.ele", fileName);
+  fp = fopen(fullPath, "r");
+  if (fp == NULL)
+  {
+    fprintf(stderr, "Cannot open file %s.\n", fullPath);
+    return 1;
+  }
+  
+  fscanf(fp, "%" SCNu32 " %*[^\n]", &n);
   if (n < 1)
   {
     fprintf(stderr, "No elements to be read\n");
@@ -162,32 +224,41 @@ int readElements(int64 *nElem, Element **elements)
   }
   
   /* There are nodes, allocate memory and reads them */
-  Element *newElements = malloc(n * sizeof(Element));
-  int64 i;
-  int64 index, n0, n1, n2;
+  elements->ptr = malloc(n * sizeof(Element));
+  uint32 i;
+  uint32 index, n0, n1, n2;
+  uint32 matIdx;
   for (i = 0; i < n; i++)
   {
-    fscanf(fp, "%" SCNd64 " %" SCNd64 " %" SCNd64 " %" SCNd64 "%*[^\n]\n", &index, &n0, &n1, &n2);
-    (*(newElements + i)).index = index;
-    (*(newElements + i)).n0 = n0;
-    (*(newElements + i)).n1 = n1;
-    (*(newElements + i)).n2 = n2;
+    fscanf(fp, "%" SCNu32 " %" SCNu32 " %" SCNu32 " %" SCNu32 " %" SCNu32 "%*[^\n]\n", &index, &n0, &n1, &n2, &matIdx);
+    (elements->ptr + i)->index = index;
+    (elements->ptr + i)->n0 = n0;
+    (elements->ptr + i)->n1 = n1;
+    (elements->ptr + i)->n2 = n2;
+    (elements->ptr + i)->material = matIdx;
   }
   
-  *elements = newElements;
-  *nElem = n;
+  elements->len = n;
   
   fclose(fp);
   return 0;
 }
 
-int readMaterials(int64 *nMaterial, Material **materials)
+int readMaterials(uint32 *nMaterial, Material **materials, char *fileName)
 {
-  int64 n;
+  uint32 n;
 
   FILE *fp;
-  fp = fopen("bar.mat", "r");
-  fscanf(fp, "%" SCNd64 "%*[^\n]", &n);
+  char fullPath[80];
+  snprintf(fullPath, sizeof(fullPath), "%s.mat", fileName);
+  fp = fopen(fullPath, "r");
+  if (fp == NULL)
+  {
+    fprintf(stderr, "Cannot open file %s.\n", fullPath);
+    return 1;
+  }
+  
+  fscanf(fp, "%" SCNu32 "%*[^\n]", &n);
   if (n < 1)
   {
     fprintf(stderr, "No materials to be read\n");
@@ -197,12 +268,12 @@ int readMaterials(int64 *nMaterial, Material **materials)
   
   /* There are materials, allocate memory and reads them */
   Material *newMaterials = malloc(n * sizeof(Material));
-  int64 i;
+  uint32 i;
   double e, density;
-  int64 index;
+  uint32 index;
   for (i = 0; i < n; i++)
   {
-    fscanf(fp, "%" SCNd64" %lf %lf*\n", &index, &e, &density);
+    fscanf(fp, "%" SCNu32" %lf %lf*\n", &index, &e, &density);
     (*(newMaterials + i)).index = index;
     (*(newMaterials + i)).e = e;
     (*(newMaterials + i)).f = density * 9.80665;
@@ -216,13 +287,21 @@ int readMaterials(int64 *nMaterial, Material **materials)
   return 0;
 }
 
-int readBC(int64 *nDirich, DirichletBC **dirBound, int64 *nNeumann, NeumannBC **neuBound)
+int readBC(uint32 *nDirich, DirichletBC **dirBound, uint32 *nNeumann, NeumannBC **neuBound, char *fileName)
 {
-  int64 n;
+  uint32 n;
 
   FILE *fp;
-  fp = fopen("bar.bc", "r");
-  fscanf(fp, "%" SCNd64 "*\n", &n);
+  char fullPath[80];
+  snprintf(fullPath, sizeof(fullPath), "%s.bc", fileName);
+  fp = fopen(fullPath, "r");
+  if (fp == NULL)
+  {
+    fprintf(stderr, "Cannot open file %s.\n", fullPath);
+    return 1;
+  }
+  
+  fscanf(fp, "%" SCNu32 "*\n", &n);
   if (n < 1)
   {
     fprintf(stderr, "No dirichlet boundary conditions to be read\n");
@@ -233,12 +312,12 @@ int readBC(int64 *nDirich, DirichletBC **dirBound, int64 *nNeumann, NeumannBC **
   /* There are bcs, allocate memory and reads them */
   DirichletBC *dirBC = malloc(n * sizeof(DirichletBC));
   
-  int64 i;
-  int64 nodeIndex;
+  uint32 i;
+  uint32 nodeIndex;
   double value;
   for (i = 0; i < n; i++)
   {
-    fscanf(fp, "%" SCNd64" %lf*\n", &nodeIndex, &value);
+    fscanf(fp, "%" SCNu32" %lf*\n", &nodeIndex, &value);
     (*(dirBC + i)).nodeIndex = nodeIndex;
     (*(dirBC + i)).value = value;
   }
@@ -254,25 +333,25 @@ int readBC(int64 *nDirich, DirichletBC **dirBound, int64 *nNeumann, NeumannBC **
   return 0;
 }
 
-int computeGlobalMatrices(const int64 nElem, const Element *elementsArray, const int64 nNode, const Node *nodesArray, const int64 nDirichlet, const DirichletBC *dirBound, const int64 nEquations, const int64 *nodeEquation, const Material *elemMaterial)
+int computeGlobalMatrices(Matrix **a, Vector **b, const ElementArray *elements, const NodeArray *nodes, const uint32 nDirichlet, const DirichletBC *dirBound, const uint32 nEquations, const int64 *nodeEquation, const Material *elemMaterial)
 {
-  Matrix *stifMatrix;
-  matrix_create(&stifMatrix, nEquations, nEquations);
+  Matrix *newStif;
+  matrix_create(&newStif, nEquations, nEquations);
+  Vector *newB;
+  vector_create(&newB, nEquations);
   
-  Matrix *bMatrix;
-  matrix_create(&bMatrix, nEquations, 1);
-  
-  int i;
-  for (i = 0; i < nElem; i++)
+  uint32 i;
+  for (i = 0; i < elements->len; i++)
   {
-    eleN3P3(stifMatrix, bMatrix, &elementsArray[i], nodesArray, nDirichlet, dirBound, nodeEquation, &elemMaterial[elementsArray[i].material]);
-    
-    matrix_print(stifMatrix);
+    eleN3P3(newStif, newB, &elements->ptr[i], nodes, nDirichlet, dirBound, nodeEquation, &elemMaterial[elements->ptr[i].material]);
   }
+  
+  *a = newStif;
+  *b = newB;
   return 0;
 }
 
-int eleN3P3(Matrix *stifMatrix, Matrix *b, const Element *element, const Node *nodes, const int64 nDirichlet, const DirichletBC *dirBound, const int64 *nodeEquation, const Material *elemMaterial)
+int eleN3P3(Matrix *stifMatrix, Vector *b, const Element *element, const NodeArray *nodes, const uint32 nDirichlet, const DirichletBC *dirBound, const int64 *nodeEquation, const Material *elemMaterial)
 {
   double a0, a1, a2;
   double b0, b1, b2;
@@ -286,9 +365,9 @@ int eleN3P3(Matrix *stifMatrix, Matrix *b, const Element *element, const Node *n
   double k00, k01, k02, k11, k12, k22;
   
   const Node *n0, *n1, *n2;
-  n0 = &nodes[element->n0];
-  n1 = &nodes[element->n1];
-  n2 = &nodes[element->n2];
+  n0 = &nodes->ptr[element->n0];
+  n1 = &nodes->ptr[element->n1];
+  n2 = &nodes->ptr[element->n2];
   
   const int64 eqNode0 = nodeEquation[element->n0];
   const int64 eqNode1 = nodeEquation[element->n1];
@@ -312,64 +391,90 @@ int eleN3P3(Matrix *stifMatrix, Matrix *b, const Element *element, const Node *n
   k12 = (a1*a2 + b1*b2)/den;
   k22 = (a2*a2 + b2*b2)/den;
   
-  const DirichletBC *dirNode0, *dirNode1, *dirNode2;
-  dirNode0 = findElementInArray(element->n0, nDirichlet, dirBound);
-  dirNode1 = findElementInArray(element->n1, nDirichlet, dirBound);
-  dirNode2 = findElementInArray(element->n2, nDirichlet, dirBound);
-  
-  if (dirNode0 == NULL)
-  {
-    matrix_sumelem(stifMatrix, eqNode0, eqNode0, k00); /* K00 */
-    matrix_sumelem(stifMatrix, eqNode0, eqNode1, k01); /* K01 */
-    matrix_sumelem(stifMatrix, eqNode0, eqNode2, k02); /* K02 */
-    matrix_sumelem(b, eqNode0, 0, elemMaterial->f/elemMaterial->e *area);
-  }
-  if (dirNode1 == NULL)
-  {
-    matrix_sumelem(stifMatrix, eqNode1, eqNode0, k01); /* K10 */
-    matrix_sumelem(stifMatrix, eqNode1, eqNode1, k11); /* K11 */
-    matrix_sumelem(stifMatrix, eqNode1, eqNode2, k12); /* K12 */
-    matrix_sumelem(b, eqNode1, 0, elemMaterial->f/elemMaterial->e *area);
-  }
-  if (dirNode2 == NULL)
-  {
-    matrix_sumelem(stifMatrix, eqNode2, eqNode0, k02); /* K20 */
-    matrix_sumelem(stifMatrix, eqNode2, eqNode1, k12); /* K21 */
-    matrix_sumelem(stifMatrix, eqNode2, eqNode2, k22); /* K22 */
-    matrix_sumelem(b, eqNode2, 0, elemMaterial->f/elemMaterial->e *area);
-  }
-  
   int conditionNumber = 0;
-  if (dirNode0 != NULL) conditionNumber += 1; /* node 0 has prescribed value */
-  if (dirNode1 != NULL) conditionNumber += 2; /* node 1 has prescribed value */
-  if (dirNode2 != NULL) conditionNumber += 4; /* node 2 has prescribed value */
+  if (eqNode0 == -1) conditionNumber += 1; /* node 0 has prescribed value */
+  if (eqNode1 == -1) conditionNumber += 2; /* node 1 has prescribed value */
+  if (eqNode2 == -1) conditionNumber += 4; /* node 2 has prescribed value */
   
+  DirichletBC *dirNode0, *dirNode1, *dirNode2;
+  double fb = elemMaterial->f/elemMaterial->e * area;
   switch (conditionNumber)
   {
     case 0: /* no dirichlet nodes */
+      matrix_sumelem(stifMatrix, eqNode0, eqNode0, k00); /* K00 */
+      matrix_sumelem(stifMatrix, eqNode0, eqNode1, k01); /* K01 */
+      matrix_sumelem(stifMatrix, eqNode0, eqNode2, k02); /* K02 */
+      matrix_sumelem(stifMatrix, eqNode1, eqNode0, k01); /* K10 */
+      matrix_sumelem(stifMatrix, eqNode1, eqNode1, k11); /* K11 */
+      matrix_sumelem(stifMatrix, eqNode1, eqNode2, k12); /* K12 */
+      matrix_sumelem(stifMatrix, eqNode2, eqNode0, k02); /* K20 */
+      matrix_sumelem(stifMatrix, eqNode2, eqNode1, k12); /* K21 */
+      matrix_sumelem(stifMatrix, eqNode2, eqNode2, k22); /* K22 */
+      vector_sumelem(b, (const uint32)eqNode0, fb);
+      vector_sumelem(b, (const uint32)eqNode1, fb);
+      vector_sumelem(b, (const uint32)eqNode2, fb);
       break;
+      
     case 1: /* node 0 is a dirichlet node */
-      matrix_sumelem(b, eqNode1, 0, -k01*dirNode1->value);
-      matrix_sumelem(b, eqNode2, 0, -k02*dirNode2->value);
+      dirNode0 = findElementInArray(element->n0, nDirichlet, dirBound);
+    
+      matrix_sumelem(stifMatrix, eqNode1, eqNode1, k11); /* K11 */
+      matrix_sumelem(stifMatrix, eqNode1, eqNode2, k12); /* K12 */
+      matrix_sumelem(stifMatrix, eqNode2, eqNode1, k12); /* K21 */
+      matrix_sumelem(stifMatrix, eqNode2, eqNode2, k22); /* K22 */
+      
+      vector_sumelem(b, (const uint32)eqNode1, fb - k01*dirNode0->value);
+      vector_sumelem(b, (const uint32)eqNode2, fb - k02*dirNode0->value);
       break;
+      
     case 2: /* node 1 is a dirichlet node */
-      matrix_sumelem(b, eqNode0, 0, -k01*dirNode0->value);
-      matrix_sumelem(b, eqNode2, 0, -k12*dirNode2->value);
+      dirNode1 = findElementInArray(element->n1, nDirichlet, dirBound);
+    
+      matrix_sumelem(stifMatrix, eqNode0, eqNode0, k00); /* K00 */
+      matrix_sumelem(stifMatrix, eqNode0, eqNode2, k02); /* K02 */
+      matrix_sumelem(stifMatrix, eqNode2, eqNode0, k02); /* K20 */
+      matrix_sumelem(stifMatrix, eqNode2, eqNode2, k22); /* K22 */
+      vector_sumelem(b, (const uint32)eqNode0, fb - k01*dirNode1->value);
+      vector_sumelem(b, (const uint32)eqNode2, fb - k12*dirNode1->value);
       break;
+      
     case 3: /* nodes 0 and 1 are dirichlet nodes */
-      matrix_sumelem(b, eqNode2, 0, -k02*dirNode0->value - k12*dirNode1->value);
+      dirNode0 = findElementInArray(element->n0, nDirichlet, dirBound);
+      dirNode1 = findElementInArray(element->n1, nDirichlet, dirBound);
+    
+      matrix_sumelem(stifMatrix, eqNode2, eqNode2, k22); /* K22 */
+      vector_sumelem(b, (const uint32)eqNode2, fb - k02*dirNode0->value - k12*dirNode1->value);
       break;
+      
     case 4: /* node 2 is a dirichlet node */
-      matrix_sumelem(b, eqNode0, 0, -k02*dirNode0->value);
-      matrix_sumelem(b, eqNode1, 0, -k12*dirNode2->value);
+      dirNode2 = findElementInArray(element->n2, nDirichlet, dirBound);
+      
+      matrix_sumelem(stifMatrix, eqNode0, eqNode0, k00); /* K00 */
+      matrix_sumelem(stifMatrix, eqNode0, eqNode1, k01); /* K01 */
+      matrix_sumelem(stifMatrix, eqNode1, eqNode0, k01); /* K10 */
+      matrix_sumelem(stifMatrix, eqNode1, eqNode1, k11); /* K11 */
+      vector_sumelem(b, (const uint32)eqNode0, fb - k02*dirNode2->value);
+      vector_sumelem(b, (const uint32)eqNode1, fb - k12*dirNode2->value);
       break;
+      
     case 5: /* nodes 0 and 2 are dirichlet nodes */
-      matrix_sumelem(b, eqNode1, 0, -k01*dirNode0->value - k12*dirNode2->value);
+      dirNode0 = findElementInArray(element->n0, nDirichlet, dirBound);
+      dirNode2 = findElementInArray(element->n2, nDirichlet, dirBound);
+    
+      matrix_sumelem(stifMatrix, eqNode1, eqNode1, k11); /* K11 */
+      vector_sumelem(b, (const uint32)eqNode1, fb - k01*dirNode0->value - k12*dirNode2->value);
       break;
+      
     case 6: /* nodes 1 and 2 are dirichlet nodes */
-      matrix_sumelem(b, eqNode0, 0, -k01*dirNode1->value - k02*dirNode2->value);
+      dirNode1 = findElementInArray(element->n1, nDirichlet, dirBound);
+      dirNode2 = findElementInArray(element->n2, nDirichlet, dirBound);
+    
+      matrix_sumelem(stifMatrix, eqNode0, eqNode0, k00); /* K00 */
+      vector_sumelem(b, (const uint32)eqNode0, fb - k01*dirNode1->value - k02*dirNode2->value);
       break;
+      
     case 7: /* all nodes are dirichlet nodes */
+      /* do nothing */
       break;
     default:
       break;
@@ -378,18 +483,16 @@ int eleN3P3(Matrix *stifMatrix, Matrix *b, const Element *element, const Node *n
   return 0;
 }
 
-int conjugateGradientMethod(const Matrix *a, const Matrix *x, const Matrix *b, Matrix **result)
+int conjugateGradientMethod(const MatrixCRS *a, Vector *x, const Vector *b)
 {
+  uint32 n = vector_size(x);
+
   double c, t, d;
-  Matrix  *p = NULL, 
-          *r = NULL, 
-          *temp = NULL, 
-          *z = NULL, 
-          *nextVector = NULL, 
-          *prevVector = NULL;
+  Vector *p, *r, *temp;
   
-  Matrix *curX;
-  matrix_copy(x, &curX);
+  vector_create(&p, n);
+  vector_create(&r, n);
+  vector_create(&temp, n);
   
   /* r = b - Ax;
      p = r;
@@ -406,99 +509,62 @@ int conjugateGradientMethod(const Matrix *a, const Matrix *x, const Matrix *b, M
        c = d;
      end do */
      
-   /* r = b - Ax */
-  matrix_multiply(a, curX, &temp);
-  matrix_subtract(b, temp, &r);
-  
-  matrix_destroy(temp);
-  temp = NULL;
+  /* r = b - Ax */
+  matrixcrs_multiplyVector(a, x, temp);
+  vector_subtract(b, temp, r);
   
   /* p = r */
-  matrix_copy(r, &p);
+  vector_copy(r, p);
   
   /* c = (r,r) */
-  c = matrix_internalProduct(r, r);
+  c = vector_internalProduct(r, r);
   
   /* for (i = 0 to M) do */
-  int i;
-  for (i = 0; i < matrix_ni(b); i++)
+  uint32 i;
+  for (i = 0; i < n; i++)
   {
     /* if (p,p)^0.5 < tolA then exit loop; */
-    if (matrix_internalProduct(p, p) < TOL) break;
+    if (sqrt(vector_internalProduct(p, p)) < TOL) break;
     
     /* z = Ap */
-    matrix_multiply(a, p, &z);
+    matrixcrs_multiplyVector(a, p, temp);
     
     /* t = c / (p,z) */
-    t = c / matrix_internalProduct(p, z);
+    t = c / vector_internalProduct(p, temp);
     
     /* x = x + tp */
-    matrix_scalarmult(t, p, &temp);
-    matrix_add(curX, temp, &nextVector);
-    prevVector = curX;
-    curX = nextVector;
-    nextVector=NULL;
-    
-    matrix_destroy(prevVector);
-    prevVector=NULL;
-    matrix_destroy(temp);
-    temp = NULL;
+    vector_addVectorScalar(x, p, t, x);
     
     /* r = r - tz */
-    matrix_scalarmult(t,z, &temp);
-    matrix_subtract(r, temp, &nextVector);
-    prevVector = r;
-    r = nextVector;
-    nextVector=NULL;
-    
-    matrix_destroy(prevVector);
-    prevVector=NULL;
-    matrix_destroy(temp);
-    temp = NULL;
-    matrix_destroy(z);
-    z = NULL;
+    vector_addVectorScalar(r, temp, -t, r);
     
     /* d = (r,r) */
-    d = matrix_internalProduct(r, r);
+    d = vector_internalProduct(r, r);
     
     /*   if (d < tolB) then exit loop */
-    if (d < TOL) break;
+    if (sqrt(d) < TOL) break;
     
     /* p = r + (d/c)p */
-    matrix_scalarmult(d/c, p, &temp);
-    matrix_add(r, temp, &nextVector);
-    prevVector = p;
-    p = nextVector;
-    nextVector = NULL;
-    
-    matrix_destroy(prevVector);
-    prevVector=NULL;
-    matrix_destroy(temp);
-    temp = NULL;
+    vector_addVectorScalar(r, p, d/c, p);
     
     /* c = d */
     c = d;
   }
   
-  if (p != NULL || r != NULL || 
-        temp != NULL || z != NULL || 
-        prevVector != NULL || nextVector != NULL)
-  {
-    fprintf(stderr, "Memory Leak: conjugateGradientMethod.\n");
-    return -1;
-  }
-  *result = curX;
+  vector_destroy(p);
+  vector_destroy(r);
+  vector_destroy(temp);
   
   return 0;
 }
 
-static const DirichletBC* findElementInArray(const int64 node, const int64 nDirichlet, const DirichletBC *dirBound)
+static DirichletBC* findElementInArray(const int64 nodeIndex, const int64 nDirichlet, const DirichletBC *dirBound)
 {
   int i;
   for (i = 0; i < nDirichlet; i++)
   {
-    if (dirBound[i].nodeIndex == node)
-      return dirBound+i;
+    if (dirBound[i].nodeIndex == nodeIndex)
+      return (DirichletBC*)(dirBound+i);
   }
   return NULL;
 }

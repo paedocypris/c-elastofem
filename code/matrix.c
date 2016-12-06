@@ -1,10 +1,11 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <inttypes.h>
+#include <float.h>
 #include "matrix.h"
 
 #define internal static
-#define FLT_TOLERANCE 1e-5
+#define FLT_TOLERANCE DBL_EPSILON *3
 
 typedef int8_t int8;
 typedef int16_t int16;
@@ -18,11 +19,21 @@ typedef uint64_t uint64;
 
 
 struct matrix {
-   struct matrix* right;
-   struct matrix* below;
-   int64 line;
-   int64 column;
-   double info;
+  struct matrix* right;
+  struct matrix* below;
+  int64 line;
+  int64 column;
+  double info;
+};
+
+struct matrixcrs {
+  double *sa;
+  uint32 *ija;
+};
+
+struct vector {
+  double *val;
+  uint32 len;
 };
 
 internal Matrix* createMatrixHeaders(int64 ni, int64 nj);
@@ -560,7 +571,7 @@ int matrix_multiply(const Matrix* m, const Matrix* n, Matrix** r)
     return -1;
   }
   
-  headNodeR = createMatrixHeaders(-m->column, -n->line);
+  headNodeR = createMatrixHeaders(-m->line, -n->column);
   matrix_multiplyE(m, n, headNodeR);
   
   *r = headNodeR;
@@ -572,7 +583,7 @@ int matrix_multiplyE(const Matrix* m, const Matrix* n, Matrix* r)
   const Matrix *currentMNode, *currentNNode;
   Matrix *currentRNode;
   
-  if (m == NULL || n == NULL)
+  if (m == NULL || n == NULL || r == NULL)
   {
     fprintf(stderr, "Tentando multiplicar uma ou duas matrizes não definidas.\n");
     return -1;
@@ -920,10 +931,241 @@ int matrix_copy(const Matrix* m, Matrix** r)
 
 int64 matrix_ni(const Matrix* m)
 {
-  return m->line;
+  return -m->line;
 }
 
 int64 matrix_nj(const Matrix* m)
 {
-  return m->column;
+  return -m->column;
+}
+
+int64 matrix_countnnz(const Matrix* m)
+{
+  Matrix *curNode;
+  int64 i = 0;
+  for (curNode = findNextNode(m, m); curNode != NULL; curNode = findNextNode(m, curNode))
+  {
+    i++;
+  }
+  return i;
+}
+
+int matrixcrs_create(const Matrix* m, MatrixCRS **newCRSMatrix)
+{
+  /* only works for square matrix */
+  uint32 n = (uint32)matrix_ni(m);
+  if (n != matrix_nj(m))
+  {
+    fprintf(stderr, "Tentando converter para matriz não quadrada.\n");
+    return 1;
+  }
+  int64 nnz = matrix_countnnz(m);
+  
+  /* allocates the required memory */
+  MatrixCRS *newMatrix = malloc(sizeof(MatrixCRS));
+  newMatrix->sa = malloc((nnz + 1) * sizeof(double));
+  newMatrix->ija = malloc((nnz + 1) * sizeof(uint32));
+  
+  /* empties the firsts nodes */
+  uint32 k;
+  for (k = 0; k < n; k++)
+  {
+    newMatrix->sa[k] = 0;
+  }
+  
+  /* fill the matrix */
+  /* Index to 1st row off-diagonal element, if any. */
+  newMatrix->ija[0] = n+1;
+  
+  Matrix *curNode;
+  uint32 i = 0;
+  k = n;
+  for (curNode = findNextNode(m, m); curNode != NULL; curNode = findNextNode(m, curNode))
+  {
+    while (curNode->line > i)
+    {
+      i++;
+      newMatrix->ija[i] = k+1;
+    }
+    
+    /* checks if the element is diagonal */
+    if (curNode->line == curNode->column)
+    {
+      newMatrix->sa[curNode->line] = curNode->info;
+    }
+    else
+    {
+      /* element is not at diagonal */
+      k++;
+      newMatrix->sa[k] = curNode->info;
+      newMatrix->ija[k] = (uint32)curNode->column;
+    }
+  }
+  newMatrix->ija[i+1] = k+1;
+  
+  *newCRSMatrix = newMatrix;
+  return 0;
+}
+
+int matrixcrs_multiplyVector(const MatrixCRS* m, const Vector *v, Vector *r)
+{
+  uint32 n = m->ija[0] - 1;
+  
+  if (n != v->len || n != r->len)
+  {
+    fprintf(stderr, "matrixcrs_multiplyVector: Matriz e vetor de tamanhos diferentes: m = %" PRIu32 "x%" PRIu32 ", v = %" PRIu32 ", r = %" PRIu32".\n", n, n, v->len, r->len);
+    return 1;
+  }
+  
+  uint32 i, k;
+  for (i = 0; i < n; i++)
+  {
+    r->val[i] = m->sa[i] * v->val[i]; /* diagonal term */
+    for(k = m->ija[i]; k < m->ija[i+1]; k++)
+    {
+      r->val[i] += m->sa[k] * v->val[m->ija[k]];
+    }
+  }
+  return 0;
+}
+
+int vector_create(Vector **v, uint32 n)
+{
+  Vector *newVector = malloc(sizeof(Vector));
+  newVector->len = n;
+  newVector->val = malloc(n * sizeof(double));
+  *v = newVector;
+  return 0;
+}
+
+int vector_destroy(Vector *v)
+{
+  free(v->val);
+  free(v);
+  return 0;
+}
+
+double vector_internalProduct(const Vector *v, const Vector *w)
+{
+  if (v->len != w->len)
+  {
+    fprintf(stderr, "vector_internalProduct: vector sizes inconsistencies.\n");
+    return DBL_MAX;
+  }
+  
+  uint32 n = v->len;
+  double sum = 0;
+  uint32 i;
+  for (i = 0; i < n; i++)
+  {
+    sum += v->val[i] * w->val[i];
+  }
+  return sum;
+}
+
+int vector_copy(const Vector *v, Vector *r)
+{
+  if (v->len != r->len)
+  {
+    fprintf(stderr, "vector_copy: vector sizes inconsistencies.\n");
+    return 1;
+  }
+  uint32 n = v->len;
+  
+  uint32 i;
+  for (i = 0; i < n; i++)
+  {
+    r->val[i] = v->val[i];
+  }
+  return 0;
+}
+
+int vector_add (const Vector *v, const Vector *w, Vector *r)
+{
+  uint32 n = v->len;
+  if (n != w->len || n != r->len)
+  {
+    fprintf(stderr, "addVector: vetores de tamanhos diferentes: v = %" PRIu32 ", w = %" PRIu32 ", r = %" PRIu32".\n", v->len, w->len, r->len);
+    return 1;
+  }
+  
+  uint32 i;
+  for (i = 0; i < n; i++)
+  {
+    r->val[i] = v->val[i] + w->val[i];
+  }
+  return 0;
+}
+
+int vector_subtract (const Vector *v, const Vector *w, Vector *r)
+{
+  uint32 n = v->len;
+  if (n != w->len || n != r->len)
+  {
+    fprintf(stderr, "addVector: vetores de tamanhos diferentes: v = %" PRIu32 ", w = %" PRIu32 ", r = %" PRIu32".\n", v->len, w->len, r->len);
+    return 1;
+  }
+  
+  uint32 i;
+  for (i = 0; i < n; i++)
+  {
+    r->val[i] = v->val[i] - w->val[i];
+  }
+  return 0;
+}
+
+int vector_addVectorScalar (const Vector *v, const Vector *w, double alfa, Vector *r)
+{
+  uint32 n = v->len;
+  if (n != w->len || n != r->len)
+  {
+    fprintf(stderr, "addVector: vetores de tamanhos diferentes: v = %" PRIu32 ", w = %" PRIu32 ", r = %" PRIu32".\n", v->len, w->len, r->len);
+    return 1;
+  }
+  
+  uint32 i;
+  for (i = 0; i < n; i++)
+  {
+    r->val[i] = v->val[i] + (alfa * w->val[i]);
+  }
+  return 0;
+}
+
+uint32 vector_size(const Vector *v)
+{
+  return v->len;
+}
+
+int vector_setelem(Vector *v, uint32 i, double elem)
+{
+  if (i >= v->len)
+  {
+    fprintf(stderr, "vector_setelem: elemento fora do vetor.\n");
+    return 1;
+  }
+  
+  v->val[i] = elem;
+  return 0;
+}
+
+int vector_sumelem(Vector *v, uint32 i, double elem)
+{
+  if (i >= v->len)
+  {
+    fprintf(stderr, "vector_setelem: elemento fora do vetor.\n");
+    return 1;
+  }
+  
+  v->val[i] += elem;
+  return 0;
+}
+
+int vector_print(const Vector *v)
+{
+  uint32 i;
+  for (i = 0; i < v->len; i++)
+  {
+    printf("%" PRIu32 ": %#.3g\n", i, v->val[i]);
+  }
+  return 0;
 }
