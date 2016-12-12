@@ -3,9 +3,9 @@
 #include <inttypes.h>
 #include <float.h>
 #include "matrix.h"
+#include "math.h"
 
 #define internal static
-#define FLT_TOLERANCE DBL_EPSILON *3
 
 typedef int8_t int8;
 typedef int16_t int16;
@@ -159,7 +159,7 @@ internal Matrix* insertNewNodeToMatrixPrevNodes(Matrix* prevRow, Matrix* prevCol
 internal void removeNodeFromMatrix(Matrix* node, Matrix* prevRow, Matrix* prevColumn)
 {
   prevRow->right = node->right;
-  prevColumn->below = prevColumn->below;
+  prevColumn->below = node->below;
   free(node);
 }
 
@@ -302,7 +302,7 @@ internal int64 getMatrixIndex(const Matrix* m, const Matrix* node)
 
 internal int floatIsZero(double x)
 {
-  if (-FLT_TOLERANCE < x && x < FLT_TOLERANCE) return 1;
+  if (fabs(x) < DBL_EPSILON) return 1;
   return 0;
 }
 
@@ -369,7 +369,7 @@ int matrix_print(const Matrix* m)
   /* searches for elements row by row */
   for (currentNode = findNextNode(m, currentNode); currentNode != NULL; currentNode = findNextNode(m, currentNode))
   {
-    fprintf( stdout, "%" PRId64 " %" PRId64 " %f\n", currentNode->line, currentNode->column, currentNode->info);
+    fprintf( stdout, "%" PRId64 " %" PRId64 " %.4g\n", currentNode->line, currentNode->column, currentNode->info);
   }
   
   fprintf( stdout, "0\n\n");
@@ -774,23 +774,18 @@ int matrix_sumelem( Matrix* m, int64 x, int64 y, double elem)
     return -1;
   }
   
-  if (floatIsZero(elem))
-  {
-    /* doesn't change the element */
-    return 0;
-  }
-  
   prevRowNode = findPrevRowNode(m, i, j);
   if (prevRowNode->right->column != j)
   {
     /* element doesn't exist, insert a new node */
-    prevColumnNode = findPrevColumnNode(m, i, j);
-    if (insertNewNodeToMatrixPrevNodes(prevRowNode, prevColumnNode, i, j, elem) == NULL)
+    if (!floatIsZero(elem))
     {
-      return -1;
+      prevColumnNode = findPrevColumnNode(m, i, j);
+      if (insertNewNodeToMatrixPrevNodes(prevRowNode, prevColumnNode, i, j, elem) == NULL)
+      {
+        return -1;
+      }
     }
-    
-    return 0;
   }
   else
   {
@@ -807,8 +802,59 @@ int matrix_sumelem( Matrix* m, int64 x, int64 y, double elem)
     
     /* element exists, updates the matrix with the new value */
     prevRowNode->right->info = temp;
-    return 0;
   }
+  return 0;
+}
+
+int matrix_applyDirBC(Matrix *m, Vector *v, uint32_t idx, double val)
+{
+  Matrix *rowHeadNode, *columnHeadNode;
+  Matrix *prevRowNode, *prevColumnNode;
+  Matrix *curNode;
+  
+  /* remove row from matrix */
+  for (curNode = m->below; curNode->line < idx; curNode = curNode->below);
+  if (curNode->line != idx)
+  {
+    fprintf(stderr, "matrix_removeLineColumn: Índice não encontrado.\n");
+    return 1;
+  }
+  
+  prevRowNode = rowHeadNode = curNode;
+  for (curNode = curNode->right; curNode != rowHeadNode; curNode = curNode->right)
+  {
+    if (curNode->line == curNode->column)
+    {
+      prevRowNode = curNode;
+      continue;
+    }
+    prevColumnNode = findPrevColumnNodeGivenNode(curNode);
+    removeNodeFromMatrix(curNode, prevRowNode, prevColumnNode);
+  }
+  
+  /* searches column Idx, multiplies by val and adds the results into v. Then remove the node from the matrix. */
+  curNode = m;
+  for (curNode = m->right; curNode->column < idx; curNode = curNode->right);
+  if (curNode->column != idx)
+  {
+    fprintf(stderr, "matrix_removeLineColumn: Índice não encontrado.\n");
+    return 1;
+  }
+  prevColumnNode = columnHeadNode = curNode;
+  
+  for (curNode = curNode->below; curNode != columnHeadNode; curNode = curNode->below)
+  {
+    if (curNode->line == curNode->column)
+    {
+      prevColumnNode = curNode;
+      v->val[curNode->line] = curNode->info * val;
+      continue;
+    }
+    v->val[curNode->line] -= curNode->info * val;
+    prevRowNode = findPrevRowNodeGivenNode(curNode);
+    removeNodeFromMatrix(curNode, prevRowNode, prevColumnNode);
+  }
+  return 0;
 }
 
 int matrix_scalarmult(double alfa, const Matrix* m, Matrix** r)
@@ -1038,6 +1084,16 @@ int vector_create(Vector **v, uint32 n)
   return 0;
 }
 
+int vector_createzero(Vector **v, uint32 n)
+{
+  Vector *newVector = malloc(sizeof(Vector));
+  newVector->len = n;
+  newVector->val = calloc(n, sizeof(double));
+  
+  *v = newVector;
+  return 0;
+}
+
 int vector_destroy(Vector *v)
 {
   free(v->val);
@@ -1158,6 +1214,11 @@ int vector_sumelem(Vector *v, uint32 i, double elem)
   
   v->val[i] += elem;
   return 0;
+}
+
+double vector_getelem(const Vector *v, uint32_t i)
+{
+  return v->val[i];
 }
 
 int vector_print(const Vector *v)

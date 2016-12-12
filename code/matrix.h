@@ -21,6 +21,8 @@ int matrix_transposeE(const Matrix* m, Matrix* r);
 int matrix_getelem( const Matrix* m, int64_t x, int64_t y, double *elem);
 int matrix_setelem( Matrix* m, int64_t x, int64_t y, double elem);
 int matrix_sumelem( Matrix* m, int64_t x, int64_t y, double elem);
+int matrix_applyDirBC(Matrix *m, Vector *v, uint32_t idx, double val);
+
 int matrix_scalarmult( double alfa, const Matrix* m, Matrix** r);
 double matrix_internalProduct(const Matrix* m, const Matrix* n);
 int matrix_copy(const Matrix* m, Matrix** r);
@@ -32,6 +34,7 @@ int matrixcrs_create(const Matrix* m, MatrixCRS **newCRSMatrix);
 int matrixcrs_multiplyVector(const MatrixCRS* m, const Vector *v, Vector *r);
 
 int vector_create(Vector **v, uint32_t n);
+int vector_createzero(Vector **v, uint32_t n);
 int vector_destroy(Vector *v);
 double vector_internalProduct(const Vector *v, const Vector *w);
 int vector_copy(const Vector *v, Vector *r);
@@ -41,6 +44,7 @@ int vector_addVectorScalar (const Vector *v, const Vector *w, double alfa, Vecto
 uint32_t vector_size(const Vector *v);
 int vector_setelem(Vector *v, uint32_t i, double elem);
 int vector_sumelem(Vector *v, uint32_t i, double elem);
+double vector_getelem(const Vector *v, uint32_t i);
 int vector_print(const Vector *v);
 
 #endif
