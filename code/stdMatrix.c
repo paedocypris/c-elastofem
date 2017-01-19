@@ -18,7 +18,7 @@ int stdmatrix_create(StdMatrix **m, uint32_t ni, uint32_t nj)
   StdMatrix *newStdMatrix = malloc(sizeof(StdMatrix));
   newStdMatrix->ni = ni;
   newStdMatrix->nj = nj;
-  newStdMatrix->val = malloc(ni*nj*sizeof(double));
+  newStdMatrix->val = calloc(ni*nj, sizeof(double));
   *m = newStdMatrix;
   return 0;
 }
@@ -131,5 +131,5 @@ inline double gval(const StdMatrix *m, uint32_t i, uint32_t j)
 
 inline uint32_t gi(const StdMatrix *m, uint32_t i, uint32_t j)
 {
-  return i*m->ni + j;
+  return i*m->nj + j;
 }

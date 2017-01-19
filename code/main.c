@@ -12,6 +12,7 @@ struct node {
   double x;
   double y;
   double u;
+  double ui[2];
 };
 typedef struct node Node;
 
@@ -20,21 +21,6 @@ struct nodeArray {
   Node *ptr;
 };
 typedef struct nodeArray NodeArray;
-
-struct element {
-  uint32_t index;
-  uint32_t material;
-  uint32_t n0;
-  uint32_t n1;
-  uint32_t n2;
-};
-typedef struct element Element;
-
-struct elementArray{
-  uint32_t len;
-  Element *ptr;
-};
-typedef struct elementArray ElementArray;
 
 struct material {
   uint32_t index;
@@ -46,6 +32,21 @@ struct material {
 };
 typedef struct material Material;
 
+struct element {
+  uint32_t index;
+  Material *material;
+  Node *n[3];
+  double vd;
+  double sEf[2][2];
+};
+typedef struct element Element;
+
+struct elementArray{
+  uint32_t len;
+  Element *ptr;
+};
+typedef struct elementArray ElementArray;
+
 struct dirichletBC {
   uint32_t nodeIndex;
   uint32_t dir;
@@ -54,33 +55,50 @@ struct dirichletBC {
 typedef struct dirichletBC DirichletBC;
 
 struct neumannBC {
-  uint32_t elementIndex;
-  uint32_t edge;
-  double val;
+  uint32_t n0;
+  uint32_t n1;
+  double val[2];
 };
 typedef struct neumannBC NeumannBC;
 
-int readNodes(NodeArray *nodes, char *fileName);
-int readElements(ElementArray *elements, char *fileName);
 int readMaterials(uint32_t *nMaterial, Material **materials, char *fileName);
+int readNodes(NodeArray *nodes, char *fileName);
+int readElements(ElementArray *elements, const NodeArray *nodes, const Material *materials, char *fileName);
 int readBCP(uint32_t *nDirich, DirichletBC **dirBound, uint32_t *nNeumann, NeumannBC **neuBound, char *fileName);
+int readBCE(uint32_t *nDirich, DirichletBC **dirBound, uint32_t *nNeumann, NeumannBC **neuBound, char *fileName);
 
-int computeGlobalMatrices(Matrix **a, Vector **b, const ElementArray *elements, const NodeArray *nodes, const uint32_t nDirichlet, const DirichletBC *dirBound, const uint32_t nNeumann, const NeumannBC *neuBound, const Material *materials);
+int computeGlobalMatrices(Matrix **a, Vector **b, const ElementArray *elements, const NodeArray *nodes, const uint32_t nDirichlet, const DirichletBC *dirBound, const uint32_t nNeumann, const NeumannBC *neuBound, const uint32_t ndof);
 
-int eleP1Poisson(Matrix *stifMatrix, Vector *b, const Element *element, const NodeArray *nodes, const uint32_t nDirichlet, const DirichletBC *dirBound, const uint32_t nNeumann, const NeumannBC *neuBound, const Material *elemMaterial);
-int eleP1Elast(Matrix *stifMatrix, Vector *b, const Element *element, const NodeArray *nodes, const uint32_t nDirichlet, const DirichletBC *dirBound, const uint32_t nNeumann, const NeumannBC *neuBound, const Material *elemMaterial);
+int eleP1Poisson(Matrix *stifMatrix, Vector *b, const Element *element);
+int eleP1Elast(Matrix *stifMatrix, Vector *b, const Element *element);
+int computeStresses(const ElementArray *elements);
 
+int loadPhiLFunctions(StdMatrix *phiL, Element *element);
+
+int applyNeuBoundary1(Vector *b, const uint32_t nNeumann, const NeumannBC *neuBound, const NodeArray *nodes);
+int applyNeuBoundary2(Vector *b, const uint32_t nNeumann, const NeumannBC *neuBound, const NodeArray *nodes);
 int applyDirBoundary(Matrix *stifMatrix, Vector *b, const uint32_t nDirichlet, const DirichletBC *dirBound, const uint32_t ndof);
 
 int conjugateGradientMethod(const MatrixCRS *a, Vector *x, const Vector *b);
 
-int loadResultIntoNode(NodeArray *nodes, Vector *x);
-static int64_t findElementInNeuArray(const uint32_t elementIndex, const uint32_t nNeumann, const NeumannBC *neuBound);
+int loadResultIntoNodePoisson(NodeArray *nodes, Vector *x);
+int loadResultIntoNodeElast(NodeArray *nodes, Vector *x);
 
 int printVTK(NodeArray *nodes, ElementArray *elements, char *fileName);
 
-inline uint32_t gi(uint32_t nj, uint32_t i, uint32_t j);
+inline uint32_t gIndex(uint32_t nj, uint32_t i, uint32_t j);
+inline double getSideLength(Node n0, Node n1);
+inline uint32_t assemblyGlobalNumber(const Node *n[3], const uint32_t i, const uint32_t ndof);
 
+double exactx(double x, double y)
+{
+  return 2*y*y;
+}
+
+double exacty(double x, double y)
+{
+  return 3*x*x;
+}
 
 int main( int argc, char *argv[] ) 
 {
@@ -111,20 +129,21 @@ int main( int argc, char *argv[] )
     return 1;
   }
   
+  /* Poisson problem */
+  
   /* (a) Input of data */
   /* (b) Representation of the triangulation Th. */
-  readNodes(&nodes, fileName);
-  readElements(&elements, fileName);
-  readBCP(&nDirichlet, &dirBound, &nNeumann, &neuBound, fileName);
   readMaterials(&nMaterial, &materials, fileName);
+  readNodes(&nodes, fileName);
+  readElements(&elements, &nodes, materials, fileName);
+  readBCP(&nDirichlet, &dirBound, &nNeumann, &neuBound, fileName);
   
   /* (c) Computation of the element stiffness matrices aK and element loads bK. */
   /* (d) Assembly of the global stiffness matrix A and load vector b. */
   Matrix *a;
   Vector *b;
-  computeGlobalMatrices(&a, &b, &elements, &nodes, nDirichlet, dirBound, nNeumann, neuBound, materials);
-  matrix_print(a);
-  vector_print(b);
+  computeGlobalMatrices(&a, &b, &elements, &nodes, nDirichlet, 
+                            dirBound, nNeumann, neuBound, 1);
   
   /* (e) Solution of the system of equations Ax = b. */
   MatrixCRS *aCrs; 
@@ -132,10 +151,38 @@ int main( int argc, char *argv[] )
   Vector *x;
   vector_createzero(&x, nodes.len);
   conjugateGradientMethod(aCrs, x, b);
-  loadResultIntoNode(&nodes, x);
+  loadResultIntoNodePoisson(&nodes, x);
+  
+  /* (g) Cleanup. */
+  matrix_destroy(a);
+  vector_destroy(b);
+  free(neuBound);
+  free(dirBound);
+  matrixcrs_destroy(aCrs);
+  vector_destroy(x);
+  
+  /* Now run the elastic problem */
+  
+  /* (a) Input of data */
+  /* (b) Representation of the triangulation Th. */
+  readBCE(&nDirichlet, &dirBound, &nNeumann, &neuBound, fileName);
+  
+  /* (c) Computation of the element stiffness matrices aK and element loads bK. */
+  /* (d) Assembly of the global stiffness matrix A and load vector b. */
+  computeGlobalMatrices(&a, &b, &elements, &nodes, nDirichlet, dirBound, nNeumann, neuBound, 2);
+  
+  /* (e) Solution of the system of equations Ax = b. */
+  matrixcrs_create(a, &aCrs);
+  vector_createzero(&x, nodes.len*2);
+  conjugateGradientMethod(aCrs, x, b);
+  loadResultIntoNodeElast(&nodes, x);
+  
+  /* (f) Calculation of the stresses at elements */
+  computeStresses(&elements);
   
   /* (f) Presentation of result. */
   printVTK(&nodes, &elements, fileName);
+  /* printSol(&nodes, fileName); */
   
   return 0;
 }
@@ -167,7 +214,7 @@ int printVTK(NodeArray *nodes, ElementArray *elements, char *fileName)
   fprintf(fp, "CELLS %"PRIu32" %"PRIu32"\n",elements->len, elements->len*4);
   for(i = 0; i < elements->len; i++)
   {
-    fprintf(fp, "3 %"PRIu32" %"PRIu32" %"PRIu32"\n", elements->ptr[i].n0, elements->ptr[i].n1, elements->ptr[i].n2);
+    fprintf(fp, "3 %"PRIu32" %"PRIu32" %"PRIu32"\n", elements->ptr[i].n[0]->index, elements->ptr[i].n[1]->index, elements->ptr[i].n[2]->index);
   }
   fprintf(fp, "\n");
   fprintf(fp, "CELL_TYPES %"PRIu32"\n", elements->len);
@@ -177,11 +224,45 @@ int printVTK(NodeArray *nodes, ElementArray *elements, char *fileName)
   }
   fprintf(fp, "\n");
   fprintf(fp, "POINT_DATA %"PRIu32"\n", nodes->len);
+  
   fprintf(fp, "SCALARS pressure float 1\n");
   fprintf(fp, "LOOKUP_TABLE default\n");
   for(i = 0; i < nodes->len; i++)
   {
-    fprintf(fp, "%.4g\n", nodes->ptr[i].u);
+    fprintf(fp, "%.6g\n", nodes->ptr[i].u);
+  }
+  
+  fprintf(fp, "VECTORS displacement float\n");
+  for(i = 0; i < nodes->len; i++)
+  {
+    fprintf(fp, "%.6g %.6g 0\n", nodes->ptr[i].ui[0], nodes->ptr[i].ui[1]);
+  }
+  fprintf(fp, "VECTORS displacementExact float\n");
+  for(i = 0; i < nodes->len; i++)
+  {
+    fprintf(fp, "%.6g %.6g 0\n", exactx(nodes->ptr[i].x,nodes->ptr[i].y), exacty(nodes->ptr[i].x,nodes->ptr[i].y));
+  }
+  fprintf(fp, "VECTORS error float\n");
+  double errorSum = 0;
+  for(i = 0; i < nodes->len; i++)
+  {
+    double errorx = nodes->ptr[i].ui[0] - exactx(nodes->ptr[i].x,nodes->ptr[i].y);
+    double errory = nodes->ptr[i].ui[1] - exacty(nodes->ptr[i].x,nodes->ptr[i].y);
+    fprintf(fp, "%.6g %.6g 0\n", errorx, errory);
+    errorSum += errorx*errorx + errory*errory;
+  }
+  printf("erro malha %s: %.6g", fileName, sqrt(errorSum/nodes->len/2));
+  fprintf(fp, "\n");
+  
+  fprintf(fp, "CELL_DATA %"PRIu32"\n", elements->len);
+  
+  fprintf(fp, "TENSORS efStress float\n");
+  for(i = 0; i < elements->len; i++)
+  {
+    fprintf(fp, "%.6g %.6g 0\n", elements->ptr[i].sEf[0][0], elements->ptr[i].sEf[0][1]);
+    fprintf(fp, "%.6g %.6g 0\n", elements->ptr[i].sEf[1][0], elements->ptr[i].sEf[1][1]);
+    fprintf(fp, "0    0    0\n");
+    fprintf(fp, "\n");
   }
   
   fclose(fp);
@@ -228,7 +309,7 @@ int readNodes(NodeArray *nodes, char *fileName)
   return 0;
 }
 
-int readElements(ElementArray *elements, char *fileName)
+int readElements(ElementArray *elements, const NodeArray *nodes, const Material *materials, char *fileName)
 {
   uint32_t n;
 
@@ -259,10 +340,10 @@ int readElements(ElementArray *elements, char *fileName)
   {
     fscanf(fp, "%" SCNu32 " %" SCNu32 " %" SCNu32 " %" SCNu32 " %" SCNu32 "%*[^\n]\n", &index, &n0, &n1, &n2, &matIdx);
     (elements->ptr + i)->index = index;
-    (elements->ptr + i)->n0 = n0;
-    (elements->ptr + i)->n1 = n1;
-    (elements->ptr + i)->n2 = n2;
-    (elements->ptr + i)->material = matIdx;
+    (elements->ptr + i)->n[0] = &nodes->ptr[n0];
+    (elements->ptr + i)->n[1] = &nodes->ptr[n1];
+    (elements->ptr + i)->n[2] = &nodes->ptr[n2];
+    (elements->ptr + i)->material = (Material*)&materials[matIdx];
   }
   
   elements->len = n;
@@ -358,14 +439,82 @@ int readBCP(uint32_t *nDirich, DirichletBC **dirBound, uint32_t *nNeumann, Neuma
   *dirBound = dirBC;
   
   fscanf(fp, " %" SCNu32 "*\n", &n);
-  NeumannBC *neuBC = malloc(n * sizeof(NeumannBC));
-  uint32_t edgeNumber;
+  *nNeumann = n;
+  if (n > 0)
+  {
+    NeumannBC *neuBC = malloc(n * sizeof(NeumannBC));
+    uint32_t n0, n1;
+    for (i = 0; i < n; i++)
+    {
+      fscanf(fp, "%" SCNu32" %"SCNu32" %lf*\n", &n0, &n1, &value);
+      
+      (*(neuBC + i)).n0 = n0;
+      (*(neuBC + i)).n1 = n1;
+      (*(neuBC + i)).val[0] = value;
+    }
+    *neuBound = neuBC;
+  }
+  else
+  {
+    *neuBound = NULL;
+  }
+  
+  fclose(fp);
+  
+  return 0;
+}
+
+int readBCE(uint32_t *nDirich, DirichletBC **dirBound, uint32_t *nNeumann, NeumannBC **neuBound, char *fileName)
+{
+  uint32_t n;
+
+  FILE *fp;
+  char fullPath[80];
+  snprintf(fullPath, sizeof(fullPath), "%s.bce", fileName);
+  fp = fopen(fullPath, "r");
+  if (fp == NULL)
+  {
+    fprintf(stderr, "Cannot open file %s.\n", fullPath);
+    return 1;
+  }
+  
+  fscanf(fp, "%" SCNu32 "*\n", &n);
+  if (n < 1)
+  {
+    fprintf(stderr, "No dirichlet boundary conditions to be read\n");
+    fclose(fp);
+    return 1;
+  }
+  
+  /* There are bcs, allocate memory and reads them */
+  DirichletBC *dirBC = malloc(n * sizeof(DirichletBC));
+  
+  uint32_t i;
+  uint32_t bIdx;
+  uint32_t dir;
+  double value[2];
   for (i = 0; i < n; i++)
   {
-    fscanf(fp, "%" SCNu32" %"SCNu32" %lf*\n", &bIdx, &edgeNumber, &value);
-    (*(neuBC + i)).elementIndex = bIdx;
-    (*(neuBC + i)).edge = edgeNumber;
-    (*(neuBC + i)).val = value;
+    fscanf(fp, "%" SCNu32" %"SCNu32" %lf*\n", &bIdx, &dir, &value[0]);
+    (*(dirBC + i)).nodeIndex = bIdx;
+    (*(dirBC + i)).dir = dir;
+    (*(dirBC + i)).val = value[0];
+  }
+  
+  *nDirich = n;
+  *dirBound = dirBC;
+  
+  fscanf(fp, " %" SCNu32 "*\n", &n);
+  NeumannBC *neuBC = malloc(n * sizeof(NeumannBC));
+  uint32_t n0, n1;
+  for (i = 0; i < n; i++)
+  {
+    fscanf(fp, "%" SCNu32" %"SCNu32" %lf %lf*\n", &n0, &n1, &value[0], &value[1]);
+    
+    (*(neuBC + i)).n0 = n0;
+    (*(neuBC + i)).n1 = n1;
+    (*(neuBC + i)).val[0] = value[0];
+    (*(neuBC + i)).val[1] = value[1];
   }
   *nNeumann = n;
   *neuBound = neuBC;
@@ -375,35 +524,53 @@ int readBCP(uint32_t *nDirich, DirichletBC **dirBound, uint32_t *nNeumann, Neuma
   return 0;
 }
 
-int computeGlobalMatrices(Matrix **a, Vector **b, const ElementArray *elements, const NodeArray *nodes, const uint32_t nDirichlet, const DirichletBC *dirBound, const uint32_t nNeumann, const NeumannBC *neuBound, const Material *materials)
+int computeGlobalMatrices(Matrix **a, Vector **b, const ElementArray *elements, const NodeArray *nodes, const uint32_t nDirichlet, const DirichletBC *dirBound, const uint32_t nNeumann, const NeumannBC *neuBound, const uint32_t ndof)
 {
   Matrix *newStif;
-  matrix_create(&newStif, nodes->len, nodes->len);
+  matrix_create(&newStif, nodes->len*ndof, nodes->len*ndof);
   Vector *newB;
-  vector_createzero(&newB, nodes->len);
+  vector_createzero(&newB, nodes->len*ndof);
   
   uint32_t i;
   for (i = 0; i < elements->len; i++)
   {
-    eleP1Poisson(newStif, newB, &elements->ptr[i], nodes, nDirichlet, dirBound, nNeumann, neuBound, &materials[elements->ptr[i].material]);
+    if (ndof == 1)
+    {
+      eleP1Poisson(newStif, newB, &elements->ptr[i]);
+    }
+    else
+    {
+      eleP1Elast(newStif, newB, &elements->ptr[i]);
+    }
+  }
+  
+  /* apply neumann boundary */
+  if (ndof == 1)
+  {
+    applyNeuBoundary1(newB, nNeumann, neuBound, nodes);
+  }
+  else
+  {
+    applyNeuBoundary2(newB, nNeumann, neuBound, nodes);
   }
   
   /* apply dir boundary */
-  applyDirBoundary(newStif, newB, nDirichlet, dirBound, 1);
+  applyDirBoundary(newStif, newB, nDirichlet, dirBound, ndof);
   
   *a = newStif;
   *b = newB;
   return 0;
 }
 
-int eleP1Poisson(Matrix *stifMatrix, Vector *b, const Element *element, const NodeArray *nodes, const uint32_t nDirichlet, const DirichletBC *dirBound, const uint32_t nNeumann, const NeumannBC *neuBound, const Material *elemMaterial)
+int eleP1Poisson(Matrix *stifMatrix, Vector *b, const Element *element)
 { 
   uint32_t i, j;
+  Material *elMat = element->material;
 
   const Node *n[3];
-  n[0] = &nodes->ptr[element->n0];
-  n[1] = &nodes->ptr[element->n1];
-  n[2] = &nodes->ptr[element->n2];
+  n[0] = element->n[0];
+  n[1] = element->n[1];
+  n[2] = element->n[2];
   
   /* calc auxiliar parameters */
   double det, den, area;
@@ -411,84 +578,56 @@ int eleP1Poisson(Matrix *stifMatrix, Vector *b, const Element *element, const No
   den = det*2;
   area = det/2;
   
-  double ax[3], bx[3];
-  ax[0] = n[1]->y - n[2]->y;
-  ax[1] = n[2]->y - n[0]->y;
-  ax[2] = n[0]->y - n[1]->y;
-  bx[0] = n[2]->x - n[1]->x;
-  bx[1] = n[0]->x - n[2]->x;
-  bx[2] = n[1]->x - n[0]->x;
-  
+  double phiL[2][3];
+  phiL[0][0] = n[1]->y - n[2]->y;  
+  phiL[0][1] = n[2]->y - n[0]->y;
+  phiL[0][2] = n[0]->y - n[1]->y;
+  phiL[1][0] = n[2]->x - n[1]->x;
+  phiL[1][1] = n[0]->x - n[2]->x;
+  phiL[1][2] = n[1]->x - n[0]->x;  
   
   double k[3][3];
   for (i = 0; i < 3; i++)
   {
     for(j = 0; j < 3; j++)
     {
-      k[i][j] = elemMaterial->k * (ax[i]*ax[j] + bx[i]*bx
-      [j])/den;
+      k[i][j] = elMat->k * (phiL[0][i]*phiL[0][j] + phiL[1][i]*phiL[1][j])/den;
     }
   }
  
-  double fb = elemMaterial->fp * area;
-  /* find neumann boundary value */
-  double gb[3] = {0};
-  int64_t nIdx = findElementInNeuArray(element->index, nNeumann, neuBound);
-  if (nIdx != -1)
-  {
-    switch (neuBound[nIdx].edge)
-    {
-      case 0:
-        gb[1] = gb[2] = sqrt(pow(n[2]->x - n[1]->x,2) + pow(n[2]->y - n[1]->y,2)) * neuBound->val/2;
-        break;
-      case 1:
-        gb[0] = gb[2] = sqrt(pow(n[0]->x - n[2]->x,2) + pow(n[0]->y - n[2]->y,2)) * neuBound->val/2;
-        break;
-      case 2:
-        gb[1] = gb[2] = sqrt(pow(n[1]->x - n[0]->x,2) + pow(n[1]->y - n[0]->y,2)) * neuBound->val/2;
-        break;
-      default:
-        fprintf(stderr, "eleP1Poisson: lado incorreto: %"PRIu32".\n", neuBound[nIdx].edge);
-        break;
-    }
-  }
-  
+  double fb = elMat->fp * area / 3;
   for (i = 0; i < 3; i++)
   {
     for (j = 0; j < 3; j++)
     {
       matrix_sumelem(stifMatrix, n[i]->index, n[j]->index, k[i][j]);
     }
-    vector_sumelem(b, n[i]->index, fb + gb[0]);
+    vector_sumelem(b, n[i]->index, fb);
   }
   
   return 0;
 }
 
-int eleP1Elast(Matrix *stifMatrix, Vector *b, const Element *element, const NodeArray *nodes, const uint32_t nDirichlet, const DirichletBC *dirBound, const uint32_t nNeumann, const NeumannBC *neuBound, const Material *elemMaterial)
+int eleP1Elast(Matrix *stifMatrix, Vector *b, const Element *element)
 {
-  double a0, a1, a2;
-  double b0, b1, b2;
-  double c, d;
-  double det, den, area;
-  
+  Material *elMat = element->material;
+
   const Node *n[3];
-  n[0] = &nodes->ptr[element->n0];
-  n[1] = &nodes->ptr[element->n1];
-  n[2] = &nodes->ptr[element->n2];
+  n[0] = element->n[0];
+  n[1] = element->n[1];
+  n[2] = element->n[2];
   
   /* calc auxiliar parameters */
-  det = n[0]->x*n[1]->y + n[0]->y*n[2]->x + n[1]->x*n[2]->y - n[1]->y*n[2]->x - n[2]->y*n[0]->x - n[0]->y*n[1]->x;
-  den = det*2;
-  area = det/2;
-  a0 = n[1]->y - n[2]->y;
-  a1 = n[2]->y - n[0]->y;
-  a2 = n[0]->y - n[1]->y;
-  b0 = n[2]->x - n[1]->x;
-  b1 = n[0]->x - n[2]->x;
-  b2 = n[1]->x - n[0]->x;
-  c = elemMaterial->l+2*elemMaterial->mu;
-  d = elemMaterial->l;
+  double det = n[0]->x*n[1]->y + n[0]->y*n[2]->x + n[1]->x*n[2]->y - n[1]->y*n[2]->x - n[2]->y*n[0]->x - n[0]->y*n[1]->x;
+  double area = det/2;
+  
+  double phiL[2][3];
+  phiL[0][0] = n[1]->y - n[2]->y;  
+  phiL[0][1] = n[2]->y - n[0]->y;
+  phiL[0][2] = n[0]->y - n[1]->y;
+  phiL[1][0] = n[2]->x - n[1]->x;
+  phiL[1][1] = n[0]->x - n[2]->x;
+  phiL[1][2] = n[1]->x - n[0]->x;
   
   /* 
   [ a0  0   a1  0   a2  0  ]
@@ -496,32 +635,49 @@ int eleP1Elast(Matrix *stifMatrix, Vector *b, const Element *element, const Node
   [ b0  a0  b1  a1  b2  a2 ]
   */
   StdMatrix *bMatrix;
-  stdmatrix_createzero(&bMatrix, 3, 6);
-  stdmatrix_setelem(bMatrix, 0, 0, a0);
-  stdmatrix_setelem(bMatrix, 0, 2, a1);
-  stdmatrix_setelem(bMatrix, 0, 4, a2);
-  stdmatrix_setelem(bMatrix, 1, 1, b0);
-  stdmatrix_setelem(bMatrix, 1, 3, b1);
-  stdmatrix_setelem(bMatrix, 1, 5, b2);
-  stdmatrix_setelem(bMatrix, 2, 0, b0);
-  stdmatrix_setelem(bMatrix, 2, 1, a0);
-  stdmatrix_setelem(bMatrix, 2, 2, b1);
-  stdmatrix_setelem(bMatrix, 2, 3, a1);
-  stdmatrix_setelem(bMatrix, 2, 4, b2);
-  stdmatrix_setelem(bMatrix, 2, 5, a2);
+  stdmatrix_create(&bMatrix, 3, 6);
+  stdmatrix_setelem(bMatrix, 0, 0, phiL[0][0]);
+  stdmatrix_setelem(bMatrix, 0, 2, phiL[0][1]);
+  stdmatrix_setelem(bMatrix, 0, 4, phiL[0][2]);
+  stdmatrix_setelem(bMatrix, 1, 1, phiL[1][0]);
+  stdmatrix_setelem(bMatrix, 1, 3, phiL[1][1]);
+  stdmatrix_setelem(bMatrix, 1, 5, phiL[1][2]);
+  stdmatrix_setelem(bMatrix, 2, 0, phiL[1][0]);
+  stdmatrix_setelem(bMatrix, 2, 1, phiL[0][0]);
+  stdmatrix_setelem(bMatrix, 2, 2, phiL[1][1]);
+  stdmatrix_setelem(bMatrix, 2, 3, phiL[0][1]);
+  stdmatrix_setelem(bMatrix, 2, 4, phiL[1][2]);
+  stdmatrix_setelem(bMatrix, 2, 5, phiL[0][2]);
   
-  /*
-  [ c  d  0 ]
-  [ d  c  0 ]
-  [ 0  0  d ]
-  */
   StdMatrix *cMatrix;
-  stdmatrix_createzero(&cMatrix, 3, 3);
+  stdmatrix_create(&cMatrix, 3, 3);
+  /* plane strain */
+  /*
+  [ l+2mu  l       0 ]
+  [  l   l + 2mu   0 ]
+  [ 0      0      mu ]
+  */
+  
+  double c = elMat->l+2*elMat->mu;
   stdmatrix_setelem(cMatrix, 0, 0, c);
-  stdmatrix_setelem(cMatrix, 0, 1, d);
-  stdmatrix_setelem(cMatrix, 1, 0, d);
+  stdmatrix_setelem(cMatrix, 0, 1, elMat->l);
+  stdmatrix_setelem(cMatrix, 1, 0, elMat->l);
   stdmatrix_setelem(cMatrix, 1, 1, c);
-  stdmatrix_setelem(cMatrix, 2, 2, d);
+  stdmatrix_setelem(cMatrix, 2, 2, elMat->mu);
+  
+  /* plane stress */
+  /*
+            [1    v      0  ]
+  E/(1-v^2) [v    1      0  ]
+            [0    0  (1-v)/2]
+  */
+  /*
+  double constant = 2600/(1-0.3*0.3);
+  stdmatrix_setelem(cMatrix, 0, 0, constant);
+  stdmatrix_setelem(cMatrix, 0, 1, constant * 0.3);
+  stdmatrix_setelem(cMatrix, 1, 0, constant * 0.3);
+  stdmatrix_setelem(cMatrix, 1, 1, constant);
+  stdmatrix_setelem(cMatrix, 2, 2, constant * (1-0.3/2));  */
   
   StdMatrix *temp;
   stdmatrix_create(&temp, 6, 3);
@@ -530,22 +686,173 @@ int eleP1Elast(Matrix *stifMatrix, Vector *b, const Element *element, const Node
   
   stdmatrix_multiplymTn(bMatrix, cMatrix, temp);
   stdmatrix_multiply(temp, bMatrix, kMatrix);
+  
+  /* cleanup matrixes */
   stdmatrix_destroy(temp);
+  stdmatrix_destroy(bMatrix);
+  stdmatrix_destroy(cMatrix);
   
-  double fb = elemMaterial->fg * area;
-  
-  uint32_t i,j;
-  for (i = 0; i < 6; i++)
+  double fbVal = elMat->fg * area / 3;
+  for (uint32_t i = 0; i < 6; i++)
   {
-    for (j = 0; j < 6; j++)
+    uint32_t idx0 = assemblyGlobalNumber(n, i, 2);
+    for (uint32_t j = 0; j < 6; j++)
     {
-      matrix_sumelem(stifMatrix, n[i]->index, n[j]->index, stdmatrix_getelem(kMatrix, i, j));
+      uint32_t idx1 = assemblyGlobalNumber(n, j, 2);
+      
+      matrix_sumelem(stifMatrix, idx0, idx1, stdmatrix_getelem(kMatrix, i, j) /2/det);
     }
-    vector_sumelem(b, n[i]->index, fb);
+    
+    double fb, fp;
+    double pInt = (n[0]->u + n[1]->u + n[2]->u)/3 * area;
+    if (i % 2 == 0)
+    {
+      fb = 0;
+      fb = -4*elMat->mu*area/3;
+      fp = phiL[0][i/2]/det * pInt;
+    }
+    else
+    {
+      fb = fbVal;
+      fb = -6*elMat->mu*area/3;
+      fp = phiL[1][i/2]/det * pInt;
+    }
+    vector_sumelem(b, idx0, fb + fp);
+  }
+  
+  stdmatrix_destroy(kMatrix);
+  
+  return 0;
+}
+
+int computeStresses(const ElementArray *elements)
+{
+  /* sEf = \lambda div(u)I + 2\mu \epsilon(u) */
+  for (uint32_t i = 0; i < elements->len; i++)
+  { 
+    Element *curElement = &elements->ptr[i];
+    Material *elMat = curElement->material;
+    
+    const Node *n[3];
+    n[0] = curElement->n[0];
+    n[1] = curElement->n[1];
+    n[2] = curElement->n[2];
+    
+    double det = n[0]->x*n[1]->y + n[0]->y*n[2]->x + n[1]->x*n[2]->y - n[1]->y*n[2]->x - n[2]->y*n[0]->x - n[0]->y*n[1]->x;
+    
+    double phiL[2][3];
+    phiL[0][0] = (n[1]->y - n[2]->y)/det;
+    phiL[0][1] = (n[2]->y - n[0]->y)/det;
+    phiL[0][2] = (n[0]->y - n[1]->y)/det;
+    phiL[1][0] = (n[2]->x - n[1]->x)/det;
+    phiL[1][1] = (n[0]->x - n[2]->x)/det;
+    phiL[1][2] = (n[1]->x - n[0]->x)/det;
+    
+    /* calc div */
+    double divu = 0;
+    for (uint32_t nIndex = 0; nIndex < 3; nIndex++)
+    {
+      for (uint32_t jDir = 0; jDir < 2; jDir++)
+      {
+        divu += n[nIndex]->ui[jDir] * phiL[jDir][nIndex];
+      }
+    }
+    
+    /* calc \epsilon */
+    double ep[2][2] = {0};
+    for (uint32_t nIndex = 0; nIndex < 3; nIndex++)
+    {
+      ep[0][0] += n[nIndex]->ui[0]*phiL[0][nIndex];
+      ep[0][1] += n[nIndex]->ui[0]*phiL[1][nIndex] + n[nIndex]->ui[1]*phiL[0][nIndex];
+      ep[1][1] += n[nIndex]->ui[1]*phiL[1][nIndex];
+    }
+    ep[0][1] /= 2;
+    ep[1][0] = ep[0][1];
+    
+    /* fill stress tensor */
+    double lambda = elMat->l; double mu = elMat->mu;
+    curElement->sEf[0][0] = lambda*divu + 2*mu*ep[0][0];
+    curElement->sEf[0][1] =               2*mu*ep[0][1];
+    curElement->sEf[1][0] =               2*mu*ep[1][0];
+    curElement->sEf[1][1] = lambda*divu + 2*mu*ep[1][1];
+  }
+  return 0;
+}
+
+int loadResultIntoNodePoisson(NodeArray *nodes, Vector *x)
+{
+  uint32_t i;
+  for (i = 0; i < nodes->len; i++)
+  {
+    nodes->ptr[i].u = vector_getelem(x, i);
+  }
+  return 0;
+}
+
+
+int loadResultIntoNodeElast(NodeArray *nodes, Vector *x)
+{
+  uint32_t i;
+  for (i = 0; i < nodes->len; i++)
+  {
+    nodes->ptr[i].ui[0] = vector_getelem(x, 2*i);
+    nodes->ptr[i].ui[1] = vector_getelem(x, 2*i+1);
+  }
+  return 0;
+}
+
+int applyNeuBoundary1(Vector *b, const uint32_t nNeumann, const NeumannBC *neuBound, const NodeArray *nodes)
+{
+  Node n[2];
+  for (uint32_t i = 0; i < nNeumann; i++)
+  {
+    n[0] = nodes->ptr[neuBound[i].n0];
+    n[1] = nodes->ptr[neuBound[i].n1];
+    
+    double sLength = getSideLength(n[0], n[1]);
+    double val = neuBound->val[0] * sLength /2;
+    
+    vector_sumelem(b, n[0].index, val);
+    vector_sumelem(b, n[1].index, val);
   }
   
   return 0;
 }
+
+int applyNeuBoundary2(Vector *b, const uint32_t nNeumann, const NeumannBC *neuBound, const NodeArray *nodes)
+{
+  for (uint32_t i = 0; i < nNeumann; i++)
+  {
+    Node n[2];
+    n[0] = nodes->ptr[neuBound[i].n0];
+    n[1] = nodes->ptr[neuBound[i].n1];
+    double sLength = getSideLength(n[0], n[1]);
+    
+    vector_sumelem(b, n[0].index*2, neuBound[i].val[0]*sLength/2);
+    vector_sumelem(b, n[0].index*2 + 1, neuBound[i].val[1]*sLength/2);
+    vector_sumelem(b, n[1].index*2, neuBound[i].val[0]*sLength/2);
+    vector_sumelem(b, n[1].index*2 + 1, neuBound[i].val[1]*sLength/2);
+  }
+  
+  return 0;
+}
+
+int applyDirBoundary(Matrix *stifMatrix, Vector *b, const uint32_t nDirichlet, const DirichletBC *dirBound, const uint32_t ndof)
+{
+  uint32_t nodeIdx, dirIdx;
+  double val;
+  uint32_t i;
+  for (i = 0; i < nDirichlet; i++)
+  {
+    nodeIdx = dirBound[i].nodeIndex;
+    dirIdx = dirBound[i].dir;
+    val = dirBound[i].val;
+    matrix_applyDirBC(stifMatrix, b,  gIndex(ndof, nodeIdx, dirIdx), val);
+  }
+  
+  return 0;
+}
+
 
 int conjugateGradientMethod(const MatrixCRS *a, Vector *x, const Vector *b)
 {
@@ -622,43 +929,17 @@ int conjugateGradientMethod(const MatrixCRS *a, Vector *x, const Vector *b)
   return 0;
 }
 
-int loadResultIntoNode(NodeArray *nodes, Vector *x)
+inline uint32_t assemblyGlobalNumber(const Node *n[3], const uint32_t i, const uint32_t ndof)
 {
-  uint32_t i;
-  for (i = 0; i < nodes->len; i++)
-  {
-    nodes->ptr[i].u = vector_getelem(x, i);
-  }
-  return 0;
+  return n[i/ndof]->index*ndof + i%ndof;
 }
 
-int applyDirBoundary(Matrix *stifMatrix, Vector *b, const uint32_t nDirichlet, const DirichletBC *dirBound, const uint32_t ndof)
-{
-  uint32_t nodeIdx, dirIdx;
-  double val;
-  uint32_t i;
-  for (i = 0; i < nDirichlet; i++)
-  {
-    nodeIdx = dirBound[i].nodeIndex;
-    dirIdx = dirBound[i].dir;
-    val = dirBound[i].val;
-    matrix_applyDirBC(stifMatrix, b, gi(ndof, nodeIdx, dirIdx), val);
-  }
-  return 0;
-}
-
-static int64_t findElementInNeuArray(const uint32_t elementIndex, const uint32_t nNeumann, const NeumannBC *neuBound)
-{
-  int64_t i;
-  for (i = 0; i < nNeumann; i++)
-  {
-    if (neuBound[i].elementIndex == elementIndex)
-      return i;
-  }
-  return -1;
-}
-
-inline uint32_t gi(uint32_t nj, uint32_t i, uint32_t j)
+inline uint32_t gIndex(uint32_t nj, uint32_t i, uint32_t j)
 {
   return i*nj + j;
+}
+
+inline double getSideLength(Node n0, Node n1)
+{
+  return sqrt(pow(n1.x - n0.x,2) + pow(n1.y - n0.y,2));
 }
