@@ -545,7 +545,7 @@ internal MatrixElem* findNextNode(const Matrix* m, const MatrixElem* node)
   }
   else
   {
-    /* searches the line. If it's the last row, continues from the next*/
+    /* searches the line. If it's the last row, continues from the next */
     MatrixElem* curNode = node->next;
     if (curNode != NULL)
     {
