@@ -28,15 +28,24 @@ int main( void ) {
     fprintf( stderr, "Erro na alocacao de B como listas encadeadas.\n" );
     return 1;
   }
-  double v;
-  matrix_getelem(A, 0, 0, &v);
-  printf("A(0,0) = %.4g\n", v);
-  matrix_getelem(A, 1, 0, &v);
-  printf("A(1,0) = %.4g\n", v);
-  matrix_getelem(A, 1, 1, &v);
-  printf("A(1,0) = %.4g\n", v);
   
   matrix_destroy( A );
   matrix_destroy( B );
+
+  if (!matrix_create(&A, 5, 5))
+  {
+	  matrix_setelem(A, 0, 0, 3);
+	  matrix_setelem(A, 0, 2, 1);
+	  matrix_setelem(A, 1, 1, 4);
+	  matrix_setelem(A, 2, 1, 7);
+	  matrix_setelem(A, 2, 2, 5);
+	  matrix_setelem(A, 2, 3, 9);
+	  matrix_setelem(A, 3, 4, 2);
+	  matrix_setelem(A, 4, 3, 6);
+	  matrix_setelem(A, 4, 4, 5);
+	  matrix_print(A);
+  }
+  MatrixCRS *mCrs;
+  matrixcrs_create(A, &mCrs);
   return 0;
 }

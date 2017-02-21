@@ -32,7 +32,7 @@ struct vector {
 
 internal inline MatrixElem* createNewNode(uint32_t i, uint32_t j, double val);
 internal inline void removeNode(Matrix *m, MatrixElem *prevNode, MatrixElem *curNode);
-internal inline void insertNewNode(MatrixElem *headNode, MatrixElem *prevNode, MatrixElem *curNode, MatrixElem *newElem);
+internal inline MatrixElem* insertNewNode(MatrixElem *headNode, MatrixElem *prevNode, MatrixElem *curNode, MatrixElem *newElem);
 internal MatrixElem* findNextNode(const Matrix* m, const MatrixElem* node);
 
 internal int floatIsZero(double x);
@@ -126,7 +126,7 @@ int matrix_setelem(Matrix* m, uint32_t i, uint32_t j, double elem)
   }
 
   MatrixElem *newElem = createNewNode(i, j, elem);
-  insertNewNode(m->lines[i], prevNode, curNode, newElem);
+  m->lines[i] = insertNewNode(m->lines[i], prevNode, curNode, newElem);
   
   return 0;
 }
@@ -168,7 +168,7 @@ int matrix_sumelem( Matrix* m, uint32_t i, uint32_t j, double elem)
     if (!floatIsZero(elem))
     {
       MatrixElem *newElem = createNewNode(i, j, elem);
-      insertNewNode(m->lines[i], prevNode, curNode, newElem);
+      m->lines[i] = insertNewNode(m->lines[i], prevNode, curNode, newElem);
     }
   }
 
@@ -230,11 +230,19 @@ int matrix_applyDirBC(Matrix *m, Vector *v, uint32_t idx, double val)
 
 uint32_t matrix_countnnz(const Matrix* m)
 {
-  uint32_t nnz = 0;
+  if (m->ni != m->nj)
+  {
+    fprintf(stderr, "matrix_countnnz: Tentando contar indices de matriz não quadrada.\n");
+    return 1;
+  }
+  uint32_t nnz = m->ni;
   MatrixElem *curNode = findNextNode(m, NULL);
   while (curNode != NULL)
   {
-    nnz++;
+    if (curNode->i != curNode->j)
+    {
+      nnz++;
+    }
     curNode = findNextNode(m, curNode);
   }
   return nnz;
@@ -522,7 +530,7 @@ internal inline void removeNode(Matrix *m, MatrixElem *prevNode, MatrixElem *cur
   free(curNode);
 }
 
-internal inline void insertNewNode(MatrixElem *headNode, MatrixElem *prevNode, MatrixElem *curNode, MatrixElem *newElem)
+internal inline MatrixElem* insertNewNode(MatrixElem *headNode, MatrixElem *prevNode, MatrixElem *curNode, MatrixElem *newElem)
 {
   if (prevNode == NULL)
   {
@@ -534,6 +542,7 @@ internal inline void insertNewNode(MatrixElem *headNode, MatrixElem *prevNode, M
     newElem->next = prevNode->next;
     prevNode->next = newElem;
   }
+  return headNode;
 }
 
 internal MatrixElem* findNextNode(const Matrix* m, const MatrixElem* node)
