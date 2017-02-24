@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <float.h>
 #include <math.h>
+#include "helper.h"
 #include "matrix.h"
 
 #define internal static
@@ -34,9 +35,6 @@ internal inline MatrixElem* createNewNode(uint32_t i, uint32_t j, double val);
 internal inline void removeNode(Matrix *m, MatrixElem *prevNode, MatrixElem *curNode);
 internal inline MatrixElem* insertNewNode(MatrixElem *headNode, MatrixElem *prevNode, MatrixElem *curNode, MatrixElem *newElem);
 internal MatrixElem* findNextNode(const Matrix* m, const MatrixElem* node);
-
-internal int floatIsZero(double x);
-internal inline void *sMalloc(size_t memsize);
 
 int matrix_create(Matrix** m, uint32_t ni, uint32_t nj)
 {
@@ -573,22 +571,4 @@ internal MatrixElem* findNextNode(const Matrix* m, const MatrixElem* node)
   }
 
   return NULL;
-}
-
-
-internal int floatIsZero(double x)
-{
-  if (fabs(x) < DBL_EPSILON) return 1;
-  return 0;
-}
-
-internal inline void *sMalloc(size_t memsize)
-{
-    void *allocMem = malloc(memsize);
-    if(!allocMem && memsize)
-    {
-        fprintf(stderr, "Could not allocate memory!\n");
-        exit(-1);
-    }
-    return allocMem;
 }

@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <math.h>
 #include "matrix.h"
+#include "helper.h"
 #include "stdMatrix.h"
 
 #define TOL 1e-6
@@ -13,6 +14,7 @@ struct node {
   double y;
   double u;
   double ui[2];
+  uint32_t bm;
 };
 typedef struct node Node;
 
@@ -47,6 +49,13 @@ struct elementArray{
 };
 typedef struct elementArray ElementArray;
 
+struct dirichletBCFile {
+  uint32_t bm;
+  uint32_t dir;
+  double val;
+};
+typedef struct dirichletBCFile DirichletBCFile;
+
 struct dirichletBC {
   uint32_t nodeIndex;
   uint32_t dir;
@@ -54,20 +63,39 @@ struct dirichletBC {
 };
 typedef struct dirichletBC DirichletBC;
 
+struct dirichletBCArray {
+  uint32_t len;
+  DirichletBC *ptr;
+};
+typedef struct dirichletBCArray DirichletBCArray;
+
+struct neumannBCFile {
+  uint32_t bm;
+  double val[3];
+};
+typedef struct neumannBCFile NeumannBCFile;
+
 struct neumannBC {
   uint32_t n0;
   uint32_t n1;
-  double val[2];
+  double val[3];
 };
 typedef struct neumannBC NeumannBC;
+
+struct neumannBCArray {
+  uint32_t len;
+  NeumannBC *ptr;
+};
+typedef struct neumannBCArray NeumannBCArray;
 
 int readMaterials(uint32_t *nMaterial, Material **materials, char *fileName);
 int readNodes(NodeArray *nodes, char *fileName);
 int readElements(ElementArray *elements, const NodeArray *nodes, const Material *materials, char *fileName);
-int readBCP(uint32_t *nDirich, DirichletBC **dirBound, uint32_t *nNeumann, NeumannBC **neuBound, char *fileName);
-int readBCE(uint32_t *nDirich, DirichletBC **dirBound, uint32_t *nNeumann, NeumannBC **neuBound, char *fileName);
+int readBC(DirichletBCArray *dirBCArray, NeumannBCArray *neuBCArray, const NodeArray *nodes, char *fullPath, char *ext);
+int readBCE(DirichletBCArray *dirBCArray, NeumannBCArray *neuBCArray, const NodeArray *nodes, char *fileName);
+int readBCP(DirichletBCArray *dirBCArray, NeumannBCArray *neuBCArray, const NodeArray *nodes, char *fileName);
 
-int computeGlobalMatrices(Matrix **a, Vector **b, const ElementArray *elements, const NodeArray *nodes, const uint32_t nDirichlet, const DirichletBC *dirBound, const uint32_t nNeumann, const NeumannBC *neuBound, const uint32_t ndof);
+int computeGlobalMatrices(Matrix **a, Vector **b, const ElementArray *elements, const NodeArray *nodes, const DirichletBCArray *dirBCArray, const NeumannBCArray *neuBCArray, const uint32_t ndof);
 
 int eleP1Poisson(Matrix *stifMatrix, Vector *b, const Element *element);
 int eleP1Elast(Matrix *stifMatrix, Vector *b, const Element *element);
@@ -75,9 +103,9 @@ int computeStresses(const ElementArray *elements);
 
 int loadPhiLFunctions(StdMatrix *phiL, Element *element);
 
-int applyNeuBoundary1(Vector *b, const uint32_t nNeumann, const NeumannBC *neuBound, const NodeArray *nodes);
-int applyNeuBoundary2(Vector *b, const uint32_t nNeumann, const NeumannBC *neuBound, const NodeArray *nodes);
-int applyDirBoundary(Matrix *stifMatrix, Vector *b, const uint32_t nDirichlet, const DirichletBC *dirBound, const uint32_t ndof);
+int applyNeuBoundary1(Vector *b, const NeumannBCArray *neuBCArray, const NodeArray *nodes);
+int applyNeuBoundary2(Vector *b, const NeumannBCArray *neuBCArray, const NodeArray *nodes);
+int applyDirBoundary(Matrix *stifMatrix, Vector *b, const DirichletBCArray *dirBCArray, const uint32_t ndof);
 
 int conjugateGradientMethod(const MatrixCRS *a, Vector *x, const Vector *b);
 
@@ -104,15 +132,11 @@ int main( int argc, char *argv[] )
 {
   NodeArray nodes;
   ElementArray elements;
+  DirichletBCArray dirBCArray;
+  NeumannBCArray neuBCArray;
   
   uint32_t nMaterial;
   Material *materials;
-  
-  uint32_t nDirichlet;
-  DirichletBC *dirBound;
-  
-  uint32_t nNeumann;
-  NeumannBC *neuBound;
   
   /* read arguments */
   char *fileName;
@@ -136,14 +160,13 @@ int main( int argc, char *argv[] )
   readMaterials(&nMaterial, &materials, fileName);
   readNodes(&nodes, fileName);
   readElements(&elements, &nodes, materials, fileName);
-  readBCP(&nDirichlet, &dirBound, &nNeumann, &neuBound, fileName);
+  readBCP(&dirBCArray, &neuBCArray, &nodes, fileName);
   
   /* (c) Computation of the element stiffness matrices aK and element loads bK. */
   /* (d) Assembly of the global stiffness matrix A and load vector b. */
   Matrix *a;
   Vector *b;
-  computeGlobalMatrices(&a, &b, &elements, &nodes, nDirichlet, 
-                            dirBound, nNeumann, neuBound, 1);
+  computeGlobalMatrices(&a, &b, &elements, &nodes, &dirBCArray, &neuBCArray, 1);
   
   /* (e) Solution of the system of equations Ax = b. */
   MatrixCRS *aCrs; 
@@ -156,8 +179,11 @@ int main( int argc, char *argv[] )
   /* (g) Cleanup. */
   matrix_destroy(a);
   vector_destroy(b);
-  free(neuBound);
-  free(dirBound);
+  free(dirBCArray.ptr);
+  if (neuBCArray.len > 0)
+  {
+    free(neuBCArray.ptr);
+  }
   matrixcrs_destroy(aCrs);
   vector_destroy(x);
   
@@ -165,11 +191,11 @@ int main( int argc, char *argv[] )
   
   /* (a) Input of data */
   /* (b) Representation of the triangulation Th. */
-  readBCE(&nDirichlet, &dirBound, &nNeumann, &neuBound, fileName);
+  readBCE(&dirBCArray, &neuBCArray, &nodes, fileName);
   
   /* (c) Computation of the element stiffness matrices aK and element loads bK. */
   /* (d) Assembly of the global stiffness matrix A and load vector b. */
-  computeGlobalMatrices(&a, &b, &elements, &nodes, nDirichlet, dirBound, nNeumann, neuBound, 2);
+  computeGlobalMatrices(&a, &b, &elements, &nodes, &dirBCArray, &neuBCArray, 2);
   
   /* (e) Solution of the system of equations Ax = b. */
   matrixcrs_create(a, &aCrs);
@@ -237,23 +263,7 @@ int printVTK(NodeArray *nodes, ElementArray *elements, char *fileName)
   {
     fprintf(fp, "%.6g %.6g 0\n", nodes->ptr[i].ui[0], nodes->ptr[i].ui[1]);
   }
-  fprintf(fp, "VECTORS displacementExact float\n");
-  for(i = 0; i < nodes->len; i++)
-  {
-    fprintf(fp, "%.6g %.6g 0\n", exactx(nodes->ptr[i].x,nodes->ptr[i].y), exacty(nodes->ptr[i].x,nodes->ptr[i].y));
-  }
-  fprintf(fp, "VECTORS error float\n");
-  double errorSum = 0;
-  for(i = 0; i < nodes->len; i++)
-  {
-    double errorx = nodes->ptr[i].ui[0] - exactx(nodes->ptr[i].x,nodes->ptr[i].y);
-    double errory = nodes->ptr[i].ui[1] - exacty(nodes->ptr[i].x,nodes->ptr[i].y);
-    fprintf(fp, "%.6g %.6g 0\n", errorx, errory);
-    errorSum += errorx*errorx + errory*errory;
-  }
-  printf("erro malha %s: %.6g", fileName, sqrt(errorSum/nodes->len/2));
   fprintf(fp, "\n");
-  
   fprintf(fp, "CELL_DATA %"PRIu32"\n", elements->len);
   
   fprintf(fp, "TENSORS efStress float\n");
@@ -292,16 +302,18 @@ int readNodes(NodeArray *nodes, char *fileName)
   }
   
   /* There are nodes, allocate memory and reads them */
-  nodes->ptr = malloc(n * sizeof(Node));
+  nodes->ptr = sMalloc(n * sizeof(Node));
   uint32_t i;
   double x, y;
   uint32_t index;
+  uint32_t bm;
   for (i = 0; i < n; i++)
   {
-    fscanf(fp, "%" SCNu32" %lf %lf %*[^\n]\n", &index, &x, &y);
+    fscanf(fp, "%" SCNu32" %lf %lf %" SCNu32"\n", &index, &x, &y, &bm);
     (nodes->ptr + i)->index = index;
     (nodes->ptr + i)->x = x;
     (nodes->ptr + i)->y= y;
+    (nodes->ptr + i)->bm = bm;
   }
   nodes->len = n;
   
@@ -332,7 +344,7 @@ int readElements(ElementArray *elements, const NodeArray *nodes, const Material 
   }
   
   /* There are nodes, allocate memory and reads them */
-  elements->ptr = malloc(n * sizeof(Element));
+  elements->ptr = sMalloc(n * sizeof(Element));
   uint32_t i;
   uint32_t index, n0, n1, n2;
   uint32_t matIdx;
@@ -375,7 +387,7 @@ int readMaterials(uint32_t *nMaterial, Material **materials, char *fileName)
   }
   
   /* There are materials, allocate memory and reads them */
-  Material *newMaterials = malloc(n * sizeof(Material));
+  Material *newMaterials = sMalloc(n * sizeof(Material));
   uint32_t i;
   double k, fPoisson;
   double e, nu, density;
@@ -399,132 +411,178 @@ int readMaterials(uint32_t *nMaterial, Material **materials, char *fileName)
   return 0;
 }
 
-int readBCP(uint32_t *nDirich, DirichletBC **dirBound, uint32_t *nNeumann, NeumannBC **neuBound, char *fileName)
+int readBCP(DirichletBCArray *dirBCArray, NeumannBCArray *neuBCArray, const NodeArray *nodes, char *fileName)
+{
+  return readBC(dirBCArray, neuBCArray, nodes, fileName, ".bcp");
+}
+
+int readBCE(DirichletBCArray *dirBCArray, NeumannBCArray *neuBCArray, const NodeArray *nodes, char *fileName)
+{
+  return readBC(dirBCArray, neuBCArray, nodes, fileName, ".bce");
+}
+
+
+int readBC(DirichletBCArray *dirBCArray, NeumannBCArray *neuBCArray, const NodeArray *nodes, char *fileName, char *ext)
 {
   uint32_t n;
 
-  FILE *fp;
   char fullPath[80];
-  snprintf(fullPath, sizeof(fullPath), "%s.bcp", fileName);
+  snprintf(fullPath, sizeof(fullPath), "%s%s", fileName, ext);
+  FILE *fp;
   fp = fopen(fullPath, "r");
   if (fp == NULL)
   {
-    fprintf(stderr, "Cannot open file %s.\n", fullPath);
+    fprintf(stderr, "readBC: Cannot open file %s.\n", fullPath);
     return 1;
   }
   
   fscanf(fp, "%" SCNu32 "*\n", &n);
   if (n < 1)
   {
-    fprintf(stderr, "No dirichlet boundary conditions to be read\n");
+    fprintf(stderr, "readBC: No dirichlet boundary conditions to be read\n");
     fclose(fp);
     return 1;
   }
   
   /* There are bcs, allocate memory and reads them */
-  DirichletBC *dirBC = malloc(n * sizeof(DirichletBC));
+  DirichletBCFile *dirBCFile = sMalloc(n * sizeof(DirichletBCFile));
   
-  uint32_t i;
-  uint32_t bIdx;
-  double value;
-  for (i = 0; i < n; i++)
+  uint32_t bm;
+  uint32_t dir;
+  double value[3];
+  for (uint32_t i = 0; i < n; i++)
   {
-    fscanf(fp, "%" SCNu32" %lf*\n", &bIdx, &value);
-    (*(dirBC + i)).nodeIndex = bIdx;
-    (*(dirBC + i)).dir = 0;
-    (*(dirBC + i)).val = value;
+    fscanf(fp, "%" SCNu32" %"SCNu32" %lf*\n", &bm, &dir, &value[0]);
+    (*(dirBCFile + i)).bm = bm;
+    (*(dirBCFile + i)).dir = dir;
+    (*(dirBCFile + i)).val = value[0];
   }
-  
-  *nDirich = n;
-  *dirBound = dirBC;
-  
-  fscanf(fp, " %" SCNu32 "*\n", &n);
-  *nNeumann = n;
-  if (n > 0)
+
+  /* loops through all the nodes, searching for the boundary markers */
+  uint32_t k = 0;
+  dirBCArray->ptr = sMalloc(nodes->len * sizeof(DirichletBC));
+  for (uint32_t i = 0; i < nodes->len; i++)
   {
-    NeumannBC *neuBC = malloc(n * sizeof(NeumannBC));
-    uint32_t n0, n1;
-    for (i = 0; i < n; i++)
+    if (nodes->ptr[i].bm > 0)
     {
-      fscanf(fp, "%" SCNu32" %"SCNu32" %lf*\n", &n0, &n1, &value);
-      
-      (*(neuBC + i)).n0 = n0;
-      (*(neuBC + i)).n1 = n1;
-      (*(neuBC + i)).val[0] = value;
+      /* has a boundary marker: check which one, and create a boundary */
+      for (uint32_t bci = 0; bci < n; bci++)
+      {
+        if (dirBCFile[bci].bm == nodes->ptr[i].bm)
+        {
+          dirBCArray->ptr[k].nodeIndex = nodes->ptr[i].index;
+          dirBCArray->ptr[k].dir = dirBCFile[bci].dir;
+          dirBCArray->ptr[k].val = dirBCFile[bci].val;
+          k++;
+        }
+      }
     }
-    *neuBound = neuBC;
+  }
+
+  if (k == 0)
+  {
+    fprintf(stderr, "readBC: No dirichlet boundary conditions found on nodes.\n");
+    fclose(fp);
+    return 1;
+  }
+  /* shrinks the array to the correct size */
+  dirBCArray->ptr = sRealloc(dirBCArray->ptr, k * sizeof(DirichletBC));
+
+  /* excludes the dirichletBCFiles, it is not needed anymore. */
+  free(dirBCFile);
+
+  /* stores the number of dirichlet nodes */
+  dirBCArray->len = k;
+
+
+  /* reads the neumann part of the file */
+  fscanf(fp, " %" SCNu32 "*\n", &n);
+  if (n == 0)
+  {
+    /* doesn't have any neumann condition*/
+    neuBCArray->len = 0;
+    fclose(fp);
+    return 0;
+  }
+
+  NeumannBCFile *neuBCFile = sMalloc(n * sizeof(NeumannBCFile));
+  for (uint32_t i = 0; i < n; i++)
+  {
+    fscanf(fp, "%" SCNu32" %lf %lf %lf\n", &bm, &value[0], &value[1], &value[2]);
+    neuBCFile[i].bm = bm;
+    neuBCFile[i].val[0] = value[0];
+    neuBCFile[i].val[1] = value[1];
+    neuBCFile[i].val[2] = value[2];
+  }
+
+  /* loops through all the edges, searching for the boundary markers */
+  FILE *fpEdge;
+  snprintf(fullPath, sizeof(fullPath), "%s.edge", fileName);
+  fpEdge = fopen(fullPath, "r");
+  if (fpEdge == NULL)
+  {
+    fprintf(stderr, "readBC: Cannot open file %s.\n", fullPath);
+    exit(-1);
+  }
+
+  uint32_t nEdge;
+  fscanf(fpEdge, "%" SCNu32 " %*[^\n]\n", &nEdge);
+  if (nEdge < 1)
+  {
+    fprintf(stderr, "readBC: No edges to be read\n");
+    exit(-1);
+  }
+
+  k = 0;
+  neuBCArray->ptr = sMalloc(nEdge * sizeof(NeumannBC));
+  for (uint32_t i = 0; i < nEdge; i++)
+  {
+    uint32_t n0, n1;
+    fscanf(fpEdge, "%*" SCNu32 " %" SCNu32 " %" SCNu32 " %" SCNu32 "\n", &n0, &n1, &bm);
+    if (bm > 0)
+    {
+      /* has a boundary marker: checks which one, and create a boundary */
+      for (uint32_t bci = 0; bci < n; bci++)
+      {
+        if (neuBCFile[bci].bm == bm)
+        {
+          neuBCArray->ptr[k].n0 = n0;
+          neuBCArray->ptr[k].n1 = n1;
+          neuBCArray->ptr[k].val[0] = neuBCFile[bci].val[0];
+          neuBCArray->ptr[k].val[1] = neuBCFile[bci].val[1];
+          neuBCArray->ptr[k].val[2] = neuBCFile[bci].val[2];
+          k++;
+          break;
+        }
+      }
+    }
+  }
+  fclose(fpEdge);
+
+  if (k > 0)
+  {
+    /* found Neumann edges */
+    /* shrinks the array to the correct size */
+    neuBCArray->ptr = sRealloc(neuBCArray->ptr, k * sizeof(NeumannBC));
   }
   else
   {
-    *neuBound = NULL;
+    /* doesn't have neumann edges, frees the memory. */
+    free(neuBCArray->ptr);
   }
-  
+
+  /* excludes the neumannBCFiles, it is not needed anymore. */
+  free(neuBCFile);
+
+  /* stores the number of neumann edges */
+  neuBCArray->len = k;
+
   fclose(fp);
   
   return 0;
 }
 
-int readBCE(uint32_t *nDirich, DirichletBC **dirBound, uint32_t *nNeumann, NeumannBC **neuBound, char *fileName)
-{
-  uint32_t n;
-
-  FILE *fp;
-  char fullPath[80];
-  snprintf(fullPath, sizeof(fullPath), "%s.bce", fileName);
-  fp = fopen(fullPath, "r");
-  if (fp == NULL)
-  {
-    fprintf(stderr, "Cannot open file %s.\n", fullPath);
-    return 1;
-  }
-  
-  fscanf(fp, "%" SCNu32 "*\n", &n);
-  if (n < 1)
-  {
-    fprintf(stderr, "No dirichlet boundary conditions to be read\n");
-    fclose(fp);
-    return 1;
-  }
-  
-  /* There are bcs, allocate memory and reads them */
-  DirichletBC *dirBC = malloc(n * sizeof(DirichletBC));
-  
-  uint32_t i;
-  uint32_t bIdx;
-  uint32_t dir;
-  double value[2];
-  for (i = 0; i < n; i++)
-  {
-    fscanf(fp, "%" SCNu32" %"SCNu32" %lf*\n", &bIdx, &dir, &value[0]);
-    (*(dirBC + i)).nodeIndex = bIdx;
-    (*(dirBC + i)).dir = dir;
-    (*(dirBC + i)).val = value[0];
-  }
-  
-  *nDirich = n;
-  *dirBound = dirBC;
-  
-  fscanf(fp, " %" SCNu32 "*\n", &n);
-  NeumannBC *neuBC = malloc(n * sizeof(NeumannBC));
-  uint32_t n0, n1;
-  for (i = 0; i < n; i++)
-  {
-    fscanf(fp, "%" SCNu32" %"SCNu32" %lf %lf*\n", &n0, &n1, &value[0], &value[1]);
-    
-    (*(neuBC + i)).n0 = n0;
-    (*(neuBC + i)).n1 = n1;
-    (*(neuBC + i)).val[0] = value[0];
-    (*(neuBC + i)).val[1] = value[1];
-  }
-  *nNeumann = n;
-  *neuBound = neuBC;
-  
-  fclose(fp);
-  
-  return 0;
-}
-
-int computeGlobalMatrices(Matrix **a, Vector **b, const ElementArray *elements, const NodeArray *nodes, const uint32_t nDirichlet, const DirichletBC *dirBound, const uint32_t nNeumann, const NeumannBC *neuBound, const uint32_t ndof)
+int computeGlobalMatrices(Matrix **a, Vector **b, const ElementArray *elements, const NodeArray *nodes, const DirichletBCArray *dirBCArray, const NeumannBCArray *neuBCArray, const uint32_t ndof)
 {
   Matrix *newStif;
   matrix_create(&newStif, nodes->len*ndof, nodes->len*ndof);
@@ -547,15 +605,15 @@ int computeGlobalMatrices(Matrix **a, Vector **b, const ElementArray *elements, 
   /* apply neumann boundary */
   if (ndof == 1)
   {
-    applyNeuBoundary1(newB, nNeumann, neuBound, nodes);
+    applyNeuBoundary1(newB, neuBCArray, nodes);
   }
   else
   {
-    applyNeuBoundary2(newB, nNeumann, neuBound, nodes);
+    applyNeuBoundary2(newB, neuBCArray, nodes);
   }
   
   /* apply dir boundary */
-  applyDirBoundary(newStif, newB, nDirichlet, dirBound, ndof);
+  applyDirBoundary(newStif, newB, dirBCArray, ndof);
   
   *a = newStif;
   *b = newB;
@@ -703,19 +761,18 @@ int eleP1Elast(Matrix *stifMatrix, Vector *b, const Element *element)
       matrix_sumelem(stifMatrix, idx0, idx1, stdmatrix_getelem(kMatrix, i, j) /2/det);
     }
     
-    double fb, fp;
-    double pInt = (n[0]->u + n[1]->u + n[2]->u)/3 * area;
+    double fb = 0;
+    double fp = 0;
+    /* double pInt = (n[0]->u + n[1]->u + n[2]->u)/3 * area; */
     if (i % 2 == 0)
     {
       fb = 0;
-      fb = -4*elMat->mu*area/3;
-      fp = phiL[0][i/2]/det * pInt;
+      /* fp = phiL[0][i/2]/det * pInt; */
     }
     else
     {
       fb = fbVal;
-      fb = -6*elMat->mu*area/3;
-      fp = phiL[1][i/2]/det * pInt;
+      /* fp = phiL[1][i/2]/det * pInt; */
     }
     vector_sumelem(b, idx0, fb + fp);
   }
@@ -801,16 +858,16 @@ int loadResultIntoNodeElast(NodeArray *nodes, Vector *x)
   return 0;
 }
 
-int applyNeuBoundary1(Vector *b, const uint32_t nNeumann, const NeumannBC *neuBound, const NodeArray *nodes)
+int applyNeuBoundary1(Vector *b, const NeumannBCArray *neuBCArray, const NodeArray *nodes)
 {
   Node n[2];
-  for (uint32_t i = 0; i < nNeumann; i++)
+  for (uint32_t i = 0; i < neuBCArray->len; i++)
   {
-    n[0] = nodes->ptr[neuBound[i].n0];
-    n[1] = nodes->ptr[neuBound[i].n1];
+    n[0] = nodes->ptr[neuBCArray->ptr[i].n0];
+    n[1] = nodes->ptr[neuBCArray->ptr[i].n1];
     
     double sLength = getSideLength(n[0], n[1]);
-    double val = neuBound->val[0] * sLength /2;
+    double val = neuBCArray->ptr[i].val[0] * sLength /2;
     
     vector_sumelem(b, n[0].index, val);
     vector_sumelem(b, n[1].index, val);
@@ -819,34 +876,34 @@ int applyNeuBoundary1(Vector *b, const uint32_t nNeumann, const NeumannBC *neuBo
   return 0;
 }
 
-int applyNeuBoundary2(Vector *b, const uint32_t nNeumann, const NeumannBC *neuBound, const NodeArray *nodes)
+int applyNeuBoundary2(Vector *b, const NeumannBCArray *neuBCArray, const NodeArray *nodes)
 {
-  for (uint32_t i = 0; i < nNeumann; i++)
+  for (uint32_t i = 0; i < neuBCArray->len; i++)
   {
     Node n[2];
-    n[0] = nodes->ptr[neuBound[i].n0];
-    n[1] = nodes->ptr[neuBound[i].n1];
+    n[0] = nodes->ptr[neuBCArray->ptr[i].n0];
+    n[1] = nodes->ptr[neuBCArray->ptr[i].n1];
     double sLength = getSideLength(n[0], n[1]);
     
-    vector_sumelem(b, n[0].index*2, neuBound[i].val[0]*sLength/2);
-    vector_sumelem(b, n[0].index*2 + 1, neuBound[i].val[1]*sLength/2);
-    vector_sumelem(b, n[1].index*2, neuBound[i].val[0]*sLength/2);
-    vector_sumelem(b, n[1].index*2 + 1, neuBound[i].val[1]*sLength/2);
+    vector_sumelem(b, n[0].index*2, neuBCArray->ptr[i].val[0]*sLength/2);
+    vector_sumelem(b, n[0].index*2 + 1, neuBCArray->ptr[i].val[1]*sLength/2);
+    vector_sumelem(b, n[1].index*2, neuBCArray->ptr[i].val[0]*sLength/2);
+    vector_sumelem(b, n[1].index*2 + 1, neuBCArray->ptr[i].val[1]*sLength/2);
   }
   
   return 0;
 }
 
-int applyDirBoundary(Matrix *stifMatrix, Vector *b, const uint32_t nDirichlet, const DirichletBC *dirBound, const uint32_t ndof)
+int applyDirBoundary(Matrix *stifMatrix, Vector *b, const DirichletBCArray *dirBCArray, const uint32_t ndof)
 {
   uint32_t nodeIdx, dirIdx;
   double val;
   uint32_t i;
-  for (i = 0; i < nDirichlet; i++)
+  for (i = 0; i < dirBCArray->len; i++)
   {
-    nodeIdx = dirBound[i].nodeIndex;
-    dirIdx = dirBound[i].dir;
-    val = dirBound[i].val;
+    nodeIdx = dirBCArray->ptr[i].nodeIndex;
+    dirIdx = dirBCArray->ptr[i].dir;
+    val = dirBCArray->ptr[i].val;
     matrix_applyDirBC(stifMatrix, b,  gIndex(ndof, nodeIdx, dirIdx), val);
   }
   
