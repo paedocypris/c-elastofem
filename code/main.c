@@ -39,7 +39,8 @@ struct element {
   Material *material;
   Node *n[3];
   double vd;
-  double sEf[2][2];
+  double sEf[4];
+  double epsP[2][2];
 };
 typedef struct element Element;
 
@@ -95,13 +96,18 @@ int readBC(DirichletBCArray *dirBCArray, NeumannBCArray *neuBCArray, const NodeA
 int readBCE(DirichletBCArray *dirBCArray, NeumannBCArray *neuBCArray, const NodeArray *nodes, char *fileName);
 int readBCP(DirichletBCArray *dirBCArray, NeumannBCArray *neuBCArray, const NodeArray *nodes, char *fileName);
 
+int solveFEM(ElementArray *elements, NodeArray *nodes, const DirichletBCArray *dirBCArray, const NeumannBCArray *neuBCArray, const uint32_t ndof);
+
 int computeGlobalMatrices(Matrix **a, Vector **b, const ElementArray *elements, const NodeArray *nodes, const DirichletBCArray *dirBCArray, const NeumannBCArray *neuBCArray, const uint32_t ndof);
 
 int eleP1Poisson(Matrix *stifMatrix, Vector *b, const Element *element);
 int eleP1Elast(Matrix *stifMatrix, Vector *b, const Element *element);
 int computeStresses(const ElementArray *elements);
 
-int loadPhiLFunctions(StdMatrix *phiL, Element *element);
+double calcPhiLMatrix(StdMatrix *phiL, const Element *element);
+int calcBMatrix(StdMatrix *B, const StdMatrix *phiL);
+int calcCMatrix(StdMatrix *C, const Element *element);
+int calcExtendedCMatrix(StdMatrix *C, const Element *element);
 
 int applyNeuBoundary1(Vector *b, const NeumannBCArray *neuBCArray, const NodeArray *nodes);
 int applyNeuBoundary2(Vector *b, const NeumannBCArray *neuBCArray, const NodeArray *nodes);
@@ -112,21 +118,13 @@ int conjugateGradientMethod(const MatrixCRS *a, Vector *x, const Vector *b);
 int loadResultIntoNodePoisson(NodeArray *nodes, Vector *x);
 int loadResultIntoNodeElast(NodeArray *nodes, Vector *x);
 
+double plasticYieldF(const double stress[2][2], const double flowStress);
+
 int printVTK(NodeArray *nodes, ElementArray *elements, char *fileName);
 
 inline uint32_t gIndex(uint32_t nj, uint32_t i, uint32_t j);
 inline double getSideLength(Node n0, Node n1);
 inline uint32_t assemblyGlobalNumber(const Node *n[3], const uint32_t i, const uint32_t ndof);
-
-double exactx(double x, double y)
-{
-  return 2*y*y;
-}
-
-double exacty(double x, double y)
-{
-  return 3*x*x;
-}
 
 int main( int argc, char *argv[] ) 
 {
@@ -160,51 +158,21 @@ int main( int argc, char *argv[] )
   readMaterials(&nMaterial, &materials, fileName);
   readNodes(&nodes, fileName);
   readElements(&elements, &nodes, materials, fileName);
-  readBCP(&dirBCArray, &neuBCArray, &nodes, fileName);
+  readBCE(&dirBCArray, &neuBCArray, &nodes, fileName);
   
-  /* (c) Computation of the element stiffness matrices aK and element loads bK. */
-  /* (d) Assembly of the global stiffness matrix A and load vector b. */
-  Matrix *a;
-  Vector *b;
-  computeGlobalMatrices(&a, &b, &elements, &nodes, &dirBCArray, &neuBCArray, 1);
+  /* closest point projection, computational inelasticity */
+  /* BOX 4.1, pag 173 */
   
-  /* (e) Solution of the system of equations Ax = b. */
-  MatrixCRS *aCrs; 
-  matrixcrs_create(a, &aCrs);
-  Vector *x;
-  vector_createzero(&x, nodes.len);
-  conjugateGradientMethod(aCrs, x, b);
-  loadResultIntoNodePoisson(&nodes, x);
+  /*1. Compute elastic predictor */
+  solveFEM(&elements, &nodes, &dirBCArray, &neuBCArray, 2);
   
-  /* (g) Cleanup. */
-  matrix_destroy(a);
-  vector_destroy(b);
+  
+  
   free(dirBCArray.ptr);
   if (neuBCArray.len > 0)
   {
     free(neuBCArray.ptr);
   }
-  matrixcrs_destroy(aCrs);
-  vector_destroy(x);
-  
-  /* Now run the elastic problem */
-  
-  /* (a) Input of data */
-  /* (b) Representation of the triangulation Th. */
-  readBCE(&dirBCArray, &neuBCArray, &nodes, fileName);
-  
-  /* (c) Computation of the element stiffness matrices aK and element loads bK. */
-  /* (d) Assembly of the global stiffness matrix A and load vector b. */
-  computeGlobalMatrices(&a, &b, &elements, &nodes, &dirBCArray, &neuBCArray, 2);
-  
-  /* (e) Solution of the system of equations Ax = b. */
-  matrixcrs_create(a, &aCrs);
-  vector_createzero(&x, nodes.len*2);
-  conjugateGradientMethod(aCrs, x, b);
-  loadResultIntoNodeElast(&nodes, x);
-  
-  /* (f) Calculation of the stresses at elements */
-  computeStresses(&elements);
   
   /* (f) Presentation of result. */
   printVTK(&nodes, &elements, fileName);
@@ -269,9 +237,9 @@ int printVTK(NodeArray *nodes, ElementArray *elements, char *fileName)
   fprintf(fp, "TENSORS efStress float\n");
   for(i = 0; i < elements->len; i++)
   {
-    fprintf(fp, "%.6g %.6g 0\n", elements->ptr[i].sEf[0][0], elements->ptr[i].sEf[0][1]);
-    fprintf(fp, "%.6g %.6g 0\n", elements->ptr[i].sEf[1][0], elements->ptr[i].sEf[1][1]);
-    fprintf(fp, "0    0    0\n");
+    fprintf(fp, "%.6g %.6g 0\n", elements->ptr[i].sEf[0], elements->ptr[i].sEf[3]/2);
+    fprintf(fp, "%.6g %.6g 0\n", elements->ptr[i].sEf[3]/2, elements->ptr[i].sEf[1]);
+    fprintf(fp, "0    0    %.6g\n", elements->ptr[i].sEf[2]);
     fprintf(fp, "\n");
   }
   
@@ -314,6 +282,7 @@ int readNodes(NodeArray *nodes, char *fileName)
     (nodes->ptr + i)->x = x;
     (nodes->ptr + i)->y= y;
     (nodes->ptr + i)->bm = bm;
+    (nodes->ptr + i)->u = 0;
   }
   nodes->len = n;
   
@@ -356,6 +325,10 @@ int readElements(ElementArray *elements, const NodeArray *nodes, const Material 
     (elements->ptr + i)->n[1] = &nodes->ptr[n1];
     (elements->ptr + i)->n[2] = &nodes->ptr[n2];
     (elements->ptr + i)->material = (Material*)&materials[matIdx];
+    (elements->ptr + i)->epsP[0][0] = 0;
+    (elements->ptr + i)->epsP[0][1] = 0;
+    (elements->ptr + i)->epsP[1][0] = 0;
+    (elements->ptr + i)->epsP[1][1] = 0;
   }
   
   elements->len = n;
@@ -420,7 +393,6 @@ int readBCE(DirichletBCArray *dirBCArray, NeumannBCArray *neuBCArray, const Node
 {
   return readBC(dirBCArray, neuBCArray, nodes, fileName, ".bce");
 }
-
 
 int readBC(DirichletBCArray *dirBCArray, NeumannBCArray *neuBCArray, const NodeArray *nodes, char *fileName, char *ext)
 {
@@ -582,6 +554,39 @@ int readBC(DirichletBCArray *dirBCArray, NeumannBCArray *neuBCArray, const NodeA
   return 0;
 }
 
+int solveFEM(ElementArray *elements, NodeArray *nodes, const DirichletBCArray *dirBCArray, const NeumannBCArray *neuBCArray, const uint32_t ndof)
+{
+  /* (c) Computation of the element stiffness matrices aK and element loads bK. */
+  /* (d) Assembly of the global stiffness matrix A and load vector b. */
+  Matrix *a;
+  Vector *b;
+  computeGlobalMatrices(&a, &b, elements, nodes, dirBCArray, neuBCArray, ndof);
+
+  /* (e) Solution of the system of equations Ax = b. */
+  MatrixCRS *aCrs;
+  matrixcrs_create(a, &aCrs);
+  Vector *x;
+  vector_createzero(&x, nodes->len);
+  conjugateGradientMethod(aCrs, x, b);
+  if (ndof == 1)
+  {
+    loadResultIntoNodePoisson(nodes, x);
+  }
+  else
+  {
+    loadResultIntoNodeElast(nodes, x);
+    computeStresses(elements);
+  }
+
+  /* (g) Cleanup. */
+  matrix_destroy(a);
+  vector_destroy(b);
+  matrixcrs_destroy(aCrs);
+  vector_destroy(x);
+
+  return 0;
+}
+
 int computeGlobalMatrices(Matrix **a, Vector **b, const ElementArray *elements, const NodeArray *nodes, const DirichletBCArray *dirBCArray, const NeumannBCArray *neuBCArray, const uint32_t ndof)
 {
   Matrix *newStif;
@@ -675,17 +680,10 @@ int eleP1Elast(Matrix *stifMatrix, Vector *b, const Element *element)
   n[1] = element->n[1];
   n[2] = element->n[2];
   
-  /* calc auxiliar parameters */
-  double det = n[0]->x*n[1]->y + n[0]->y*n[2]->x + n[1]->x*n[2]->y - n[1]->y*n[2]->x - n[2]->y*n[0]->x - n[0]->y*n[1]->x;
-  double area = det/2;
-  
-  double phiL[2][3];
-  phiL[0][0] = n[1]->y - n[2]->y;  
-  phiL[0][1] = n[2]->y - n[0]->y;
-  phiL[0][2] = n[0]->y - n[1]->y;
-  phiL[1][0] = n[2]->x - n[1]->x;
-  phiL[1][1] = n[0]->x - n[2]->x;
-  phiL[1][2] = n[1]->x - n[0]->x;
+  /* calc shape function */
+  StdMatrix *phiL;
+  stdmatrix_create(&phiL, 2, 3);
+  double det = calcPhiLMatrix(phiL, element);
   
   /* 
   [ a0  0   a1  0   a2  0  ]
@@ -694,48 +692,11 @@ int eleP1Elast(Matrix *stifMatrix, Vector *b, const Element *element)
   */
   StdMatrix *bMatrix;
   stdmatrix_create(&bMatrix, 3, 6);
-  stdmatrix_setelem(bMatrix, 0, 0, phiL[0][0]);
-  stdmatrix_setelem(bMatrix, 0, 2, phiL[0][1]);
-  stdmatrix_setelem(bMatrix, 0, 4, phiL[0][2]);
-  stdmatrix_setelem(bMatrix, 1, 1, phiL[1][0]);
-  stdmatrix_setelem(bMatrix, 1, 3, phiL[1][1]);
-  stdmatrix_setelem(bMatrix, 1, 5, phiL[1][2]);
-  stdmatrix_setelem(bMatrix, 2, 0, phiL[1][0]);
-  stdmatrix_setelem(bMatrix, 2, 1, phiL[0][0]);
-  stdmatrix_setelem(bMatrix, 2, 2, phiL[1][1]);
-  stdmatrix_setelem(bMatrix, 2, 3, phiL[0][1]);
-  stdmatrix_setelem(bMatrix, 2, 4, phiL[1][2]);
-  stdmatrix_setelem(bMatrix, 2, 5, phiL[0][2]);
+  calcBMatrix(bMatrix, phiL);
   
   StdMatrix *cMatrix;
   stdmatrix_create(&cMatrix, 3, 3);
-  /* plane strain */
-  /*
-  [ l+2mu  l       0 ]
-  [  l   l + 2mu   0 ]
-  [ 0      0      mu ]
-  */
-  
-  double c = elMat->l+2*elMat->mu;
-  stdmatrix_setelem(cMatrix, 0, 0, c);
-  stdmatrix_setelem(cMatrix, 0, 1, elMat->l);
-  stdmatrix_setelem(cMatrix, 1, 0, elMat->l);
-  stdmatrix_setelem(cMatrix, 1, 1, c);
-  stdmatrix_setelem(cMatrix, 2, 2, elMat->mu);
-  
-  /* plane stress */
-  /*
-            [1    v      0  ]
-  E/(1-v^2) [v    1      0  ]
-            [0    0  (1-v)/2]
-  */
-  /*
-  double constant = 2600/(1-0.3*0.3);
-  stdmatrix_setelem(cMatrix, 0, 0, constant);
-  stdmatrix_setelem(cMatrix, 0, 1, constant * 0.3);
-  stdmatrix_setelem(cMatrix, 1, 0, constant * 0.3);
-  stdmatrix_setelem(cMatrix, 1, 1, constant);
-  stdmatrix_setelem(cMatrix, 2, 2, constant * (1-0.3/2));  */
+  calcCMatrix(cMatrix, element);
   
   StdMatrix *temp;
   stdmatrix_create(&temp, 6, 3);
@@ -745,12 +706,7 @@ int eleP1Elast(Matrix *stifMatrix, Vector *b, const Element *element)
   stdmatrix_multiplymTn(bMatrix, cMatrix, temp);
   stdmatrix_multiply(temp, bMatrix, kMatrix);
   
-  /* cleanup matrixes */
-  stdmatrix_destroy(temp);
-  stdmatrix_destroy(bMatrix);
-  stdmatrix_destroy(cMatrix);
-  
-  double fbVal = elMat->fg * area / 3;
+  double fbVal = elMat->fg * det / 6;
   for (uint32_t i = 0; i < 6; i++)
   {
     uint32_t idx0 = assemblyGlobalNumber(n, i, 2);
@@ -758,7 +714,7 @@ int eleP1Elast(Matrix *stifMatrix, Vector *b, const Element *element)
     {
       uint32_t idx1 = assemblyGlobalNumber(n, j, 2);
       
-      matrix_sumelem(stifMatrix, idx0, idx1, stdmatrix_getelem(kMatrix, i, j) /2/det);
+      matrix_sumelem(stifMatrix, idx0, idx1, stdmatrix_getelem(kMatrix, i, j) * det / 2);
     }
     
     double fb = 0;
@@ -777,62 +733,170 @@ int eleP1Elast(Matrix *stifMatrix, Vector *b, const Element *element)
     vector_sumelem(b, idx0, fb + fp);
   }
   
+  /* cleanup matrixes */
+  stdmatrix_destroy(temp);
+  stdmatrix_destroy(bMatrix);
+  stdmatrix_destroy(cMatrix);
   stdmatrix_destroy(kMatrix);
+  stdmatrix_destroy(phiL);
   
+  return 0;
+}
+
+double calcPhiLMatrix(StdMatrix *phiL, const Element *element)
+{
+  if (phiL == NULL || stdmatrix_ni(phiL) != 2 || stdmatrix_nj(phiL) != 3)
+  {
+    fprintf(stderr, "calcPhiLMatrix: mismatched matrix size.\n");
+    exit(-1);
+  }
+
+  double det = element->n[0]->x*element->n[1]->y + 
+    element->n[0]->y*element->n[2]->x + 
+    element->n[1]->x*element->n[2]->y - 
+    element->n[1]->y*element->n[2]->x - 
+    element->n[2]->y*element->n[0]->x - 
+    element->n[0]->y*element->n[1]->x;
+
+  stdmatrix_setelem(phiL, 0, 0, (element->n[1]->y - element->n[2]->y) / det);
+  stdmatrix_setelem(phiL, 0, 1, (element->n[2]->y - element->n[0]->y) / det);
+  stdmatrix_setelem(phiL, 0, 2, (element->n[0]->y - element->n[1]->y) / det);
+  stdmatrix_setelem(phiL, 1, 0, (element->n[2]->x - element->n[1]->x) / det);
+  stdmatrix_setelem(phiL, 1, 1, (element->n[0]->x - element->n[2]->x) / det);
+  stdmatrix_setelem(phiL, 1, 2, (element->n[1]->x - element->n[0]->x) / det);
+  return det;
+}
+
+int calcBMatrix(StdMatrix *bMatrix, const StdMatrix *phiL)
+{
+  if (bMatrix == NULL || stdmatrix_ni(bMatrix) != 3 || stdmatrix_nj(bMatrix) != 6)
+  {
+    fprintf(stderr, "calcBMatrix: mismatched matrix size.\n");
+    exit(-1);
+  }
+
+  stdmatrix_setelem(bMatrix, 0, 0, stdmatrix_getelem(phiL, 0, 0));
+  stdmatrix_setelem(bMatrix, 0, 2, stdmatrix_getelem(phiL, 0, 1));
+  stdmatrix_setelem(bMatrix, 0, 4, stdmatrix_getelem(phiL, 0, 2));
+  stdmatrix_setelem(bMatrix, 1, 1, stdmatrix_getelem(phiL, 1, 0));
+  stdmatrix_setelem(bMatrix, 1, 3, stdmatrix_getelem(phiL, 1, 1));
+  stdmatrix_setelem(bMatrix, 1, 5, stdmatrix_getelem(phiL, 1, 2));
+  stdmatrix_setelem(bMatrix, 2, 0, stdmatrix_getelem(phiL, 1, 0));
+  stdmatrix_setelem(bMatrix, 2, 1, stdmatrix_getelem(phiL, 0, 0));
+  stdmatrix_setelem(bMatrix, 2, 2, stdmatrix_getelem(phiL, 1, 1));
+  stdmatrix_setelem(bMatrix, 2, 3, stdmatrix_getelem(phiL, 0, 1));
+  stdmatrix_setelem(bMatrix, 2, 4, stdmatrix_getelem(phiL, 1, 2));
+  stdmatrix_setelem(bMatrix, 2, 5, stdmatrix_getelem(phiL, 0, 2));
+  return 0;
+}
+
+int calcCMatrix(StdMatrix *C, const Element *element)
+{
+  if (C == NULL || stdmatrix_ni(C) != 3 || stdmatrix_nj(C) != 3)
+  {
+    fprintf(stderr, "calcCMatrix: mismatched matrix size.\n");
+    exit(-1);
+  }
+
+  /* plane strain */
+  /*
+  [ l+2mu  l       0 ]
+  [  l   l + 2mu   0 ]
+  [ 0      0      mu ]
+  */
+  double c = element->material->l + 2 * element->material->mu;
+  stdmatrix_setelem(C, 0, 0, c);
+  stdmatrix_setelem(C, 0, 1, element->material->l);
+  stdmatrix_setelem(C, 1, 0, element->material->l);
+  stdmatrix_setelem(C, 1, 1, c);
+  stdmatrix_setelem(C, 2, 2, element->material->mu);
+  return 0;
+}
+
+int calcExtendedCMatrix(StdMatrix *extC, const Element *element)
+{
+  if (extC == NULL || stdmatrix_ni(extC) != 4 || stdmatrix_nj(extC) != 3)
+  {
+    fprintf(stderr, "calcExtendedCMatrix: mismatched matrix size.\n");
+    exit(-1);
+  }
+
+  /* plane strain */
+  /*
+  [ l+2mu  l       0 ]
+  [  l   l + 2mu   0 ]
+  [  l     l       0 ]
+  [ 0      0      mu ]
+  */
+  double c = element->material->l + 2 * element->material->mu;
+  stdmatrix_setelem(extC, 0, 0, c);
+  stdmatrix_setelem(extC, 0, 1, element->material->l);
+  stdmatrix_setelem(extC, 1, 0, element->material->l);
+  stdmatrix_setelem(extC, 1, 1, c);
+  stdmatrix_setelem(extC, 2, 0, element->material->l);
+  stdmatrix_setelem(extC, 2, 1, element->material->l);
+  stdmatrix_setelem(extC, 3, 2, element->material->mu);
   return 0;
 }
 
 int computeStresses(const ElementArray *elements)
 {
-  /* sEf = \lambda div(u)I + 2\mu \epsilon(u) */
+  /* \sigma = C\epsilon(u) */
+  StdMatrix *phiL;
+  stdmatrix_create(&phiL, 2, 3);
+
+  StdMatrix *uColumnVector;
+  stdmatrix_create(&uColumnVector, 6, 1);
+
+  StdMatrix *bMatrix;
+  stdmatrix_create(&bMatrix, 3, 6);
+
+  StdMatrix *extCMatrix;
+  stdmatrix_create(&extCMatrix, 4, 3);
+
+  StdMatrix *strainVector;
+  stdmatrix_create(&strainVector, 3, 1);
+
+  StdMatrix *stressVector;
+  stdmatrix_create(&stressVector, 4, 1);
+
   for (uint32_t i = 0; i < elements->len; i++)
   { 
     Element *curElement = &elements->ptr[i];
-    Material *elMat = curElement->material;
     
     const Node *n[3];
     n[0] = curElement->n[0];
     n[1] = curElement->n[1];
     n[2] = curElement->n[2];
-    
-    double det = n[0]->x*n[1]->y + n[0]->y*n[2]->x + n[1]->x*n[2]->y - n[1]->y*n[2]->x - n[2]->y*n[0]->x - n[0]->y*n[1]->x;
-    
-    double phiL[2][3];
-    phiL[0][0] = (n[1]->y - n[2]->y)/det;
-    phiL[0][1] = (n[2]->y - n[0]->y)/det;
-    phiL[0][2] = (n[0]->y - n[1]->y)/det;
-    phiL[1][0] = (n[2]->x - n[1]->x)/det;
-    phiL[1][1] = (n[0]->x - n[2]->x)/det;
-    phiL[1][2] = (n[1]->x - n[0]->x)/det;
-    
-    /* calc div */
-    double divu = 0;
-    for (uint32_t nIndex = 0; nIndex < 3; nIndex++)
-    {
-      for (uint32_t jDir = 0; jDir < 2; jDir++)
-      {
-        divu += n[nIndex]->ui[jDir] * phiL[jDir][nIndex];
-      }
-    }
+
+    calcPhiLMatrix(phiL, curElement);
     
     /* calc \epsilon */
-    double ep[2][2] = {0};
+    /* \epsilon(u) = [B]{u} */
+    calcBMatrix(bMatrix, phiL);
+
     for (uint32_t nIndex = 0; nIndex < 3; nIndex++)
     {
-      ep[0][0] += n[nIndex]->ui[0]*phiL[0][nIndex];
-      ep[0][1] += n[nIndex]->ui[0]*phiL[1][nIndex] + n[nIndex]->ui[1]*phiL[0][nIndex];
-      ep[1][1] += n[nIndex]->ui[1]*phiL[1][nIndex];
+      stdmatrix_setelem(uColumnVector, nIndex * 2, 0, n[nIndex]->ui[0]);
+      stdmatrix_setelem(uColumnVector, nIndex * 2 + 1, 0, n[nIndex]->ui[1]);
     }
-    ep[0][1] /= 2;
-    ep[1][0] = ep[0][1];
-    
+
+    stdmatrix_multiply(bMatrix, uColumnVector, strainVector);
+
+    /* calc stress */
+    calcExtendedCMatrix(extCMatrix, curElement);
+
+    stdmatrix_multiply(extCMatrix, strainVector, stressVector);
+
     /* fill stress tensor */
-    double lambda = elMat->l; double mu = elMat->mu;
-    curElement->sEf[0][0] = lambda*divu + 2*mu*ep[0][0];
-    curElement->sEf[0][1] =               2*mu*ep[0][1];
-    curElement->sEf[1][0] =               2*mu*ep[1][0];
-    curElement->sEf[1][1] = lambda*divu + 2*mu*ep[1][1];
+    for (uint32_t j = 0; j < 4; i++)
+    {
+      curElement->sEf[j] = stdmatrix_getelem(stressVector, 0, j);
+    }
+
+    /* clean matrices */
   }
+
   return 0;
 }
 
@@ -856,6 +920,12 @@ int loadResultIntoNodeElast(NodeArray *nodes, Vector *x)
     nodes->ptr[i].ui[1] = vector_getelem(x, 2*i+1);
   }
   return 0;
+}
+
+double plasticYieldF(const double stress[2][2], const double flowStress)
+{
+  return sqrt(stress[0][0] * stress[0][0] + stress[0][1] * stress[0][1]
+    + stress[1][0] * stress[1][0] + stress[1][1] * stress[1][1]);
 }
 
 int applyNeuBoundary1(Vector *b, const NeumannBCArray *neuBCArray, const NodeArray *nodes)

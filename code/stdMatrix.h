@@ -12,5 +12,9 @@ int stdmatrix_multiply(const StdMatrix *m, const StdMatrix *n, StdMatrix *r);
 int stdmatrix_multiplymTn(const StdMatrix *m, const StdMatrix *n, StdMatrix *r);
 double stdmatrix_getelem(const StdMatrix *m, uint32_t i, uint32_t j);
 int stdmatrix_setelem(StdMatrix *m, uint32_t i, uint32_t j, double val);
+uint32_t stdmatrix_ni(const StdMatrix *m);
+uint32_t stdmatrix_nj(const StdMatrix *m);
+
+double matrix_norm(const StdMatrix *m);
 
 #endif

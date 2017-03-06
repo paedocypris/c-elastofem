@@ -119,6 +119,29 @@ int stdmatrix_setelem(StdMatrix *m, uint32_t i, uint32_t j, double val)
   return 0;
 }
 
+double matrix_norm(const StdMatrix *m)
+{
+  double sum = 0;
+  for (uint32_t i = 0; i < m->ni; i++)
+  {
+    for (uint32_t j = 0; j < m->nj; j++)
+    {
+      sum += gval(m, i, j);
+    }
+  }
+  return sum;
+}
+
+uint32_t stdmatrix_ni(const StdMatrix *m)
+{
+  return m->ni;
+}
+
+uint32_t stdmatrix_nj(const StdMatrix *m)
+{
+  return m->nj;
+}
+
 inline void sval(StdMatrix *m, uint32_t i, uint32_t j, double val)
 {
   m->val[gi(m, i, j)] = val;
