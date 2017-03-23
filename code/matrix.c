@@ -82,6 +82,20 @@ int matrix_print(const Matrix* m)
   return 0;
 }
 
+int matrix_issimetric(const Matrix *m)
+{
+  for (MatrixElem *curNode = findNextNode(m, NULL); curNode != NULL; curNode = findNextNode(m, curNode))
+  {
+    double val2;
+    matrix_getelem(m, curNode->i, curNode->j, &val2);
+    if (!floatIsZero(curNode->val - val2))
+    {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 int matrix_getelem( const Matrix* m, uint32_t i, uint32_t j, double *elem)
 {
   if (i >= m->ni || j >= m->nj)
@@ -156,8 +170,17 @@ int matrix_sumelem( Matrix* m, uint32_t i, uint32_t j, double elem)
     else
     {
       /* removes the element */
-      prevNode->next = curNode->next;
-      free(curNode);
+      if (prevNode != NULL)
+      {
+        prevNode->next = curNode->next;
+        free(curNode);
+      }
+      else
+      {
+        /* first element, special treatment */
+        m->lines[i] = curNode->next;
+        free(curNode);
+      }
     }
   }
   else
@@ -358,7 +381,7 @@ int vector_createzero(Vector **v, uint32_t n)
 {
   Vector *newVector = sMalloc(sizeof(Vector));
   newVector->len = n;
-  newVector->val = calloc(n, sizeof(double));
+  newVector->val = sCalloc(n, sizeof(double));
   
   *v = newVector;
   return 0;

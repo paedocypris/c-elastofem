@@ -2,6 +2,7 @@
 #define MATRIX_H_INCLUDED
 
 #include <stdint.h>
+#include "stdMatrix.h"
 
 typedef struct matrix Matrix;
 typedef struct matrixcrs MatrixCRS;
@@ -10,6 +11,8 @@ typedef struct vector Vector;
 int matrix_create(Matrix** m, uint32_t ni, uint32_t nj);
 int matrix_destroy(Matrix* m);
 int matrix_print(const Matrix* m);
+
+int matrix_issimetric(const Matrix *m);
 int matrix_getelem( const Matrix* m, uint32_t i, uint32_t j, double *elem);
 int matrix_setelem( Matrix* m, uint32_t i, uint32_t j, double elem);
 int matrix_sumelem( Matrix* m, uint32_t i, uint32_t j, double elem);

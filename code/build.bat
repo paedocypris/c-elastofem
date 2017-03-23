@@ -10,5 +10,5 @@ cl %CompilerFlags% /c ..\code\stdMatrix.c
 cl %CompilerFlags% /c ..\code\main.c
 cl %CompilerFlags% /c ..\code\mainTeste.c
 cl %CompilerFlags% main.obj helper.obj stdMatrix.obj matrix.obj 
-cl %CompilerFlags% mainTeste.obj helper.obj matrix.obj
+cl %CompilerFlags% mainTeste.obj helper.obj stdMatrix.obj
 popd

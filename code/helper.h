@@ -23,6 +23,17 @@ inline void *sMalloc(size_t memsize)
   return allocMem;
 }
 
+inline void *sCalloc(size_t count, size_t size)
+{
+  void *allocMem = calloc(count, size);
+  if (!allocMem && count)
+  {
+    fprintf(stderr, "sCalloc: Could not allocate memory!\n");
+    exit(-1);
+  }
+  return allocMem;
+}
+
 inline void *sRealloc(void *block, size_t memsize)
 {
   void *rBuf = realloc(block, memsize);
